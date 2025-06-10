@@ -1,0 +1,30 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <title>Join Game</title>
+</head>
+<body>
+<h1>Join Game</h1>
+
+{% with messages = get_flashed_messages() %}
+    {% if messages %}
+        <div class="alert">
+            {{ messages[0] }}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<div>
+    <h2>Join Game: {{ game_code }}</h2>
+    <form action="/join" method="post">
+        <input type="hidden" name="game_code" value="{{ game_code }}">
+        <input type="text" name="player_name" placeholder="Your Name" required autofocus>
+        <button type="submit">Join Game</button>
+    </form>
+</div>
+
+<div>
+    <a href="/">Back to Home</a>
+</div>
+</body>
+</html>

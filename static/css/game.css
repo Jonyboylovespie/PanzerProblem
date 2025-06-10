@@ -1,0 +1,11 @@
+﻿#game-container {
+    margin: 20px 0;
+}
+#game-canvas {
+    border: 1px solid #000;
+    background: #f0f0f0;
+}
+.tank-controls {
+    margin-top: 10px;
+    font-style: italic;
+}
