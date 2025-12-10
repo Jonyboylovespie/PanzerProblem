@@ -4,22 +4,20 @@
     <title>Game Room</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/game.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-    <script src="{{ url_for('static', filename='js/game.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </head>
 <body>
 <p>Game Code: <strong id="game-code">{{ game_code }}</strong></p>
-
+<div id="fps-counter">FPS: --</div>
 <div id="game-container">
     <canvas id="game-canvas" width="800" height="600"></canvas>
 </div>
-
 <h2>Players</h2>
 <ul id="players-list">
     {% for player in game_data.players %}
         <li>{{ player }}{% if player == game_data.host %} (Host){% endif %}</li>
     {% endfor %}
 </ul>
-
 <p>You are playing as: <strong id="player-name">{{ player_name }}</strong></p>
 
 <button id="leave-button">Leave Game</button>

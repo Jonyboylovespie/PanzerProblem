@@ -1,7 +1,8 @@
 ﻿import random
 import string
+import math
 from flask import Flask, render_template, request, redirect, url_for, session, flash
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_socketio import SocketIO, emit, join_room
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key'
@@ -25,13 +26,9 @@ def get_random_spawn(maze, cell_size):
     """Return (x, y) at centre of a random cell with ≤2 surrounding walls."""
     height = len(maze)
     width = len(maze[0])
-    while True:
-        cx = random.randint(0, width - 1)
-        cy = random.randint(0, height - 1)
-        cell = maze[cy][cx]
-        wall_count = sum(cell[side] for side in ("top", "right", "bottom", "left"))
-        if wall_count <= 2:
-            return cx * cell_size + cell_size / 2, cy * cell_size + cell_size / 2
+    cx = random.randint(0, width - 1)
+    cy = random.randint(0, height - 1)
+    return cx * cell_size + cell_size / 2, cy * cell_size + cell_size / 2
 
 @app.route('/')
 def home():
@@ -98,7 +95,9 @@ def create_game():
     while game_code in games:
         game_code = generate_game_code()
 
-    maze = generate_maze(10, 10)
+    width = int(10 * random.random() + 5)
+    height = int(10 * random.random() + 5)
+    maze = generate_maze(width, height)
     cell_size = 70
     spawn_x, spawn_y = get_random_spawn(maze, cell_size)
     games[game_code] = {
@@ -114,7 +113,8 @@ def create_game():
                 'angle': 0,
                 'color': generate_random_color()
             }
-        }
+        },
+        'bullets': {}
     }
 
     session['game_code'] = game_code
@@ -199,6 +199,78 @@ def on_tank_move(data):
         # Broadcast new positions to all players
         emit('update_tanks', games[game_code]['tanks'], room=game_code)
 
+@socketio.on('bullet_state')
+def on_bullet_state(data):
+    game_code = data.get('game_code')
+    bullet_id = data.get('bullet_id')
+    bullet = data.get('bullet')  # {x,y,vx,vy,shooter,lifetime}
+
+    if not (game_code and bullet_id and bullet):
+        return
+
+    if game_code in games:
+        # Accept client authoritative bullet state
+        games[game_code]['bullets'][bullet_id] = bullet
+        # Broadcast to all clients
+        emit('update_bullets', games[game_code]['bullets'], room=game_code)
+
+@socketio.on('shoot')
+def on_shoot(data):
+    game_code = data.get('game_code')
+    player_name = data.get('player_name')
+
+    if game_code and game_code in games and player_name in games[game_code]['tanks']:
+        # Enforce one active bullet per shooter
+        for b_id, b in games[game_code]['bullets'].items():
+            if b.get('shooter') == player_name:
+                # Already has an active bullet; ignore shoot request
+                return
+
+        tank = games[game_code]['tanks'][player_name]
+        bullet_speed = 300
+
+        bullet_id = f"{player_name}_{len(games[game_code]['bullets'])}"
+
+        # Create bullet at tank cannon position
+        games[game_code]['bullets'][bullet_id] = {
+            'x': tank['x'] + 20 * math.cos(tank['angle']),
+            'y': tank['y'] + 20 * math.sin(tank['angle']),
+            'vx': bullet_speed * math.cos(tank['angle']),
+            'vy': bullet_speed * math.sin(tank['angle']),
+            'shooter': player_name,
+            'lifetime': 10.0
+        }
+
+        # Broadcast new bullet to all players
+        emit('update_bullets', games[game_code]['bullets'], room=game_code)
+
+@socketio.on('bullet_hit_tank')
+def on_bullet_hit_tank(data):
+    game_code = data.get('game_code')
+    bullet_id = data.get('bullet_id')
+    victim_name = data.get('victim_name')
+
+    if game_code and game_code in games and victim_name in games[game_code]['players']:
+        # Remove the bullet
+        if bullet_id in games[game_code]['bullets']:
+            del games[game_code]['bullets'][bullet_id]
+
+        # Respawn the victim
+        cell_size = games[game_code]['cell_size']
+        maze = games[game_code]['maze']
+        spawn_x, spawn_y = get_random_spawn(maze, cell_size)
+
+        games[game_code]['tanks'][victim_name] = {
+            'x': spawn_x,
+            'y': spawn_y,
+            'angle': games[game_code]['tanks'][victim_name]['angle'],
+            'color': games[game_code]['tanks'][victim_name]['color']
+        }
+
+        # Broadcast updates
+        emit('update_bullets', games[game_code]['bullets'], room=game_code)
+        emit('update_tanks', games[game_code]['tanks'], room=game_code)
+
 @socketio.on('disconnect')
 def on_disconnect():
     player_name = session.get('player_name')
@@ -235,6 +307,17 @@ def on_request_maze(data):
             'maze': games[game_code]['maze'],
             'cell_size': games[game_code]['cell_size']
         })
+
+@socketio.on('bullet_remove')
+def on_bullet_remove(data):
+    game_code = data.get('game_code')
+    bullet_id = data.get('bullet_id')
+    if not (game_code and bullet_id):
+        return
+    if game_code in games:
+        if bullet_id in games[game_code]['bullets']:
+            del games[game_code]['bullets'][bullet_id]
+        emit('update_bullets', games[game_code]['bullets'], room=game_code)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)

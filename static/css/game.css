@@ -9,3 +9,16 @@
     margin-top: 10px;
     font-style: italic;
 }
+#fps-counter {
+    position: fixed;
+    top: 8px;
+    right: 12px;
+    background: rgba(0,0,0,0.6);
+    color: #0f0;
+    font: 12px/1 monospace;
+    padding: 4px 8px;
+    border-radius: 4px;
+    z-index: 1000;
+    pointer-events: none;
+    letter-spacing: 0.5px;
+}
