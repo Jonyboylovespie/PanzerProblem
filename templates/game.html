@@ -7,6 +7,7 @@
     <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </head>
 <body>
+<div id="game-config" data-host="{{ game_data.host }}" data-started="{{ 'true' if game_data.started else 'false' if game_data.started is defined else 'false' }}"></div>
 <p>Game Code: <strong id="game-code">{{ game_code }}</strong></p>
 <div id="fps-counter">FPS: --</div>
 <div id="game-container">
@@ -19,6 +20,10 @@
     {% endfor %}
 </ul>
 <p>You are playing as: <strong id="player-name">{{ player_name }}</strong></p>
+
+{% if player_name == game_data.host %}
+<button id="start-button">Start Game</button>
+{% endif %}
 
 <button id="leave-button">Leave Game</button>
 </body>

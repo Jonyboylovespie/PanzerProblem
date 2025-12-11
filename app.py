@@ -86,6 +86,26 @@ def generate_maze(width, height):
 
     return maze
 
+def generate_empty_maze(width, height):
+    """Generate an almost-empty maze for lobby: only border walls."""
+    maze = []
+    for y in range(height):
+        row = []
+        for x in range(width):
+            cell = {"top": False, "right": False, "bottom": False, "left": False}
+            # Add border walls on outer edges
+            if y == 0:
+                cell["top"] = True
+            if y == height - 1:
+                cell["bottom"] = True
+            if x == 0:
+                cell["left"] = True
+            if x == width - 1:
+                cell["right"] = True
+            row.append(cell)
+        maze.append(row)
+    return maze
+
 @app.route('/create', methods=['POST'])
 def create_game():
     host_name = request.form.get('host_name')
@@ -95,17 +115,20 @@ def create_game():
     while game_code in games:
         game_code = generate_game_code()
 
-    width = int(10 * random.random() + 5)
-    height = int(10 * random.random() + 5)
-    maze = generate_maze(width, height)
+    # Lobby phase uses a fixed 5x5 empty maze
+    width = 5
+    height = 5
+    maze = generate_empty_maze(width, height)
     cell_size = 70
     spawn_x, spawn_y = get_random_spawn(maze, cell_size)
     games[game_code] = {
         'host': host_name,
         'players': [host_name],
         'active': True,
+        'started': False,
         'maze': maze,
         'cell_size': cell_size,
+        'scores': {host_name: 0},
         'tanks': {
             host_name: {
                 'x': spawn_x,
@@ -156,6 +179,11 @@ def join_game():
         'color': generate_random_color()
     }
 
+    # Initialize score for new player
+    if 'scores' not in games[game_code]:
+        games[game_code]['scores'] = {}
+    games[game_code]['scores'][player_name] = 0
+
     session['game_code'] = game_code
     session['player_name'] = player_name
 
@@ -185,6 +213,54 @@ def on_join(data):
             'game_data': games[game_code]
         }, room=game_code)
 
+@socketio.on('start_game')
+def on_start_game(data):
+    game_code = data.get('game_code')
+    player_name = data.get('player_name')
+
+    if not (game_code and game_code in games):
+        return
+
+    game = games[game_code]
+
+    # Only host can start, and only once, and require 2+ players
+    if game.get('started') or game.get('host') != player_name:
+        return
+    if len(game.get('players', [])) < 2:
+        return
+
+    # Generate a new random maze for the real game
+    width = int(10 * random.random() + 5)
+    height = int(10 * random.random() + 5)
+    maze = generate_maze(width, height)
+    game['maze'] = maze
+
+    cell_size = game['cell_size']
+
+    # Respawn all players at random maze positions
+    for name in game['players']:
+        spawn_x, spawn_y = get_random_spawn(maze, cell_size)
+        existing = game['tanks'].get(name, {})
+        game['tanks'][name] = {
+            'x': spawn_x,
+            'y': spawn_y,
+            'angle': 0,
+            'color': existing.get('color', generate_random_color())
+        }
+
+    # Clear bullets and mark started
+    game['bullets'] = {}
+    game['started'] = True
+
+    # Send new maze and tank positions to all clients
+    socketio.emit('maze_data', {
+        'maze': game['maze'],
+        'cell_size': game['cell_size']
+    }, room=game_code)
+
+    socketio.emit('update_tanks', game['tanks'], room=game_code)
+    socketio.emit('game_started', {'started': True}, room=game_code)
+
 @socketio.on('tank_move')
 def on_tank_move(data):
     game_code = data.get('game_code')
@@ -208,7 +284,7 @@ def on_bullet_state(data):
     if not (game_code and bullet_id and bullet):
         return
 
-    if game_code in games:
+    if game_code in games and games[game_code].get('started'):
         # Accept client authoritative bullet state
         games[game_code]['bullets'][bullet_id] = bullet
         # Broadcast to all clients
@@ -220,6 +296,9 @@ def on_shoot(data):
     player_name = data.get('player_name')
 
     if game_code and game_code in games and player_name in games[game_code]['tanks']:
+        if not games[game_code].get('started'):
+            # No shooting in lobby
+            return
         # Enforce one active bullet per shooter
         for b_id, b in games[game_code]['bullets'].items():
             if b.get('shooter') == player_name:
@@ -251,6 +330,9 @@ def on_bullet_hit_tank(data):
     victim_name = data.get('victim_name')
 
     if game_code and game_code in games and victim_name in games[game_code]['players']:
+        if not games[game_code].get('started'):
+            # Ignore hits while in lobby
+            return
         # Remove the bullet
         if bullet_id in games[game_code]['bullets']:
             del games[game_code]['bullets'][bullet_id]
@@ -283,6 +365,10 @@ def on_disconnect():
         # Remove player's tank
         if 'tanks' in games[game_code] and player_name in games[game_code]['tanks']:
             del games[game_code]['tanks'][player_name]
+
+        # Remove player's score if present
+        if 'scores' in games[game_code] and player_name in games[game_code]['scores']:
+            del games[game_code]['scores'][player_name]
 
         # If the host left, either end game or assign new host
         if player_name == games[game_code]['host'] and games[game_code]['players']:

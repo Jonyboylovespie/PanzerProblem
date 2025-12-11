@@ -17,6 +17,14 @@ function startGame(){
   socket = initSocket();
   BulletManager = createBulletManager(socket);
 
+  // Host can start the real game from the lobby
+  const startBtn = document.getElementById('start-button');
+  if (startBtn && STATE.isHost) {
+    startBtn.addEventListener('click', ()=>{
+      socket.emit('start_game', { game_code: STATE.gameCode, player_name: STATE.playerName });
+    });
+  }
+
   timePreviousLoop = Date.now();
   const fpsEl = document.getElementById('fps-counter');
 
@@ -35,7 +43,8 @@ function startGame(){
       if(keys.a || keys.ArrowLeft){ if(attemptRotate(me,-rotSpeed)) moved=true; }
       if(keys.d || keys.ArrowRight){ if(attemptRotate(me,rotSpeed)) moved=true; }
       if(moved){ socket.emit('tank_move',{ game_code: STATE.gameCode, player_name: STATE.playerName, x: me.x, y: me.y, angle: me.angle }); }
-      if(keys[' ']){ if(!BulletManager.hasActiveFor(STATE.playerName)) BulletManager.spawnFromTank(STATE.playerName); keys[' ']=false; }
+      // No shooting until the game has started
+      if(STATE.started && keys[' ']){ if(!BulletManager.hasActiveFor(STATE.playerName)) BulletManager.spawnFromTank(STATE.playerName); keys[' ']=false; }
     }
 
     BulletManager.update(delta);
