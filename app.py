@@ -1,7 +1,8 @@
-﻿import random
-import string
 import math
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+import random
+import string
+
+from flask import Flask, flash, redirect, render_template, request, session, url_for
 from flask_socketio import SocketIO, emit, join_room
 
 app = Flask(__name__)
