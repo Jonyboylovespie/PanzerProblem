@@ -17,10 +17,10 @@ def generate_game_code(length=6):
 
 def generate_random_color():
     """Generate a random color for tanks"""
-    h = random.randint(0, 360)
-    s = 100
-    l = 50
-    return f'hsl({h}, {s}%, {l}%)'
+    H = random.randint(0, 360)
+    S = 100
+    L = 50
+    return f'hsl({H}, {S}%, {L}%)'
 
 def get_random_spawn(maze, cell_size):
     """Return (x, y) at centre of a random cell with ≤2 surrounding walls."""
