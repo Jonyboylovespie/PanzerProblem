@@ -359,20 +359,9 @@ def on_bullet_hit_tank(data):
         if bullet_id in games[game_code]["bullets"]:
             shooter = games[game_code]["bullets"][bullet_id].get("shooter")
             del games[game_code]["bullets"][bullet_id]
+            
+        respawn_player(game_code, victim_name)
 
-        # Respawn the victim
-        cell_size = games[game_code]["cell_size"]
-        maze = games[game_code]["maze"]
-        spawn_x, spawn_y = get_random_spawn(maze, cell_size)
-
-        games[game_code]["tanks"][victim_name] = {
-            "x": spawn_x,
-            "y": spawn_y,
-            "angle": games[game_code]["tanks"][victim_name]["angle"],
-            "color": games[game_code]["tanks"][victim_name]["color"],
-        }
-
-        # Award point to shooter if present
         if shooter and shooter in games[game_code]["players"]:
             if "scores" not in games[game_code]:
                 games[game_code]["scores"] = {}
@@ -381,6 +370,18 @@ def on_bullet_hit_tank(data):
         # Broadcast updates
         emit("update_bullets", games[game_code]["bullets"], room=game_code)
         emit("update_tanks", games[game_code]["tanks"], room=game_code)
+        
+def respawn_player(game_code, player_name):
+    cell_size = games[game_code]["cell_size"]
+    maze = games[game_code]["maze"]
+    spawn_x, spawn_y = get_random_spawn(maze, cell_size)
+
+    games[game_code]["tanks"][player_name] = {
+        "x": spawn_x,
+        "y": spawn_y,
+        "angle": games[game_code]["tanks"][player_name]["angle"],
+        "color": games[game_code]["tanks"][player_name]["color"],
+    }
 
 
 def add_score(game_code, player, amount):
