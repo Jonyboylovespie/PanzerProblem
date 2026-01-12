@@ -1,30 +1,50 @@
-﻿<!DOCTYPE html>
+﻿<!doctype html>
 <html>
-<head>
-    <title>Game Room</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/game.css') }}">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
-</head>
-<body>
-<div id="game-config" data-host="{{ game_data.host }}" data-started="{{ 'true' if game_data.started else 'false' if game_data.started is defined else 'false' }}"></div>
-<p>Game Code: <strong id="game-code">{{ game_code }}</strong></p>
-<div id="fps-counter">FPS: --</div>
-<div id="game-container">
-    <canvas id="game-canvas" width="800" height="600"></canvas>
-</div>
-<h2>Players</h2>
-<ul id="players-list">
-    {% for player in game_data.players %}
-        <li>{{ player }}{% if player == game_data.host %} (Host){% endif %}</li>
-    {% endfor %}
-</ul>
-<p>You are playing as: <strong id="player-name">{{ player_name }}</strong></p>
+    <head>
+        <title>Game Room</title>
+        <link
+            rel="stylesheet"
+            href="{{ url_for("static", filename="css/game.css") }}"
+        />
+        <script type="module">
+          import { STATE } from "{{ url_for('static', filename='js/state.js') }}";
+          STATE.players = {{ game_data.players | tojson }};
+          STATE.scores = {{ (game_data.scores | default({})) | tojson }};
+        </script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+        <script
+            type="module"
+            src="{{ url_for("static", filename="js/main.js") }}"
+        ></script>
+    </head>
+    <body>
+        <div
+            id="game-config"
+            data-host="{{ game_data.host }}"
+            data-started="{{ "true" if game_data.started else "false" if game_data.started is defined else "false" }}"
+        ></div>
+        <p>Game Code: <strong id="game-code">{{ game_code }}</strong></p>
+        <div id="fps-counter">FPS: --</div>
+        <div id="game-container">
+            <canvas id="game-canvas" width="800" height="600"></canvas>
+        </div>
+        <h2>Players</h2>
+        <ul id="players-list">
+            {% for player in game_data.players %}
+            <li>
+                {{ player }}{% if player == game_data.host %} (Host){% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        <p>
+            You are playing as:
+            <strong id="player-name">{{ player_name }}</strong>
+        </p>
 
-{% if player_name == game_data.host %}
-<button id="start-button">Start Game</button>
-{% endif %}
+        {% if player_name == game_data.host %}
+        <button id="start-button">Start Game</button>
+        {% endif %}
 
-<button id="leave-button">Leave Game</button>
-</body>
+        <button id="leave-button">Leave Game</button>
+    </body>
 </html>

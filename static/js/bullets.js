@@ -1,11 +1,11 @@
-﻿import { STATE } from './state.js';
-import { pointInRect, pointInCircle } from './helpers.js';
-import { drawBullet } from './render.js';
+﻿import { STATE } from "./state.js";
+import { pointInRect, pointInCircle } from "./helpers.js";
+import { drawBullet } from "./render.js";
 export function createBulletManager(socket){
   const radiusHit = 15;
   return {
     hasActiveFor(name){ return Object.values(STATE.bullets).some(b => b.shooter === name); },
-    spawnFromTank(name){ socket.emit('shoot', { game_code: STATE.gameCode, player_name: name }); },
+    spawnFromTank(name){ socket.emit("shoot", { game_code: STATE.gameCode, player_name: name }); },
     update(delta){
       const toRemove=[];
       for(const [id,b] of Object.entries(STATE.bullets)){
@@ -19,10 +19,10 @@ export function createBulletManager(socket){
         if(hitY){ b.vy=-b.vy; ny=b.y+b.vy*delta; }
         const mag=Math.hypot(b.vx,b.vy); if(mag>0 && Math.abs(mag-origSpeed)>1e-6){ b.vx*=origSpeed/mag; b.vy*=origSpeed/mag; }
         let victim=null; for(const [name,t] of Object.entries(STATE.tanks)){ if(pointInCircle(nx,ny,t.x,t.y,radiusHit)){ victim=name; break; } }
-        if(victim){ toRemove.push(id); socket.emit('bullet_hit_tank',{ game_code: STATE.gameCode, bullet_id:id, victim_name:victim }); }
-        else { b.x=nx; b.y=ny; socket.emit('bullet_state',{ game_code: STATE.gameCode, bullet_id:id, bullet:b }); }
+        if(victim){ toRemove.push(id); socket.emit("bullet_hit_tank",{ game_code: STATE.gameCode, bullet_id:id, victim_name:victim }); }
+        else { b.x=nx; b.y=ny; socket.emit("bullet_state",{ game_code: STATE.gameCode, bullet_id:id, bullet:b }); }
       }
-      for(const id of toRemove){ delete STATE.bullets[id]; socket.emit('bullet_remove',{ game_code: STATE.gameCode, bullet_id:id }); }
+      for(const id of toRemove){ delete STATE.bullets[id]; socket.emit("bullet_remove",{ game_code: STATE.gameCode, bullet_id:id }); }
     },
     render(){ for(const b of Object.values(STATE.bullets)) drawBullet(b.x,b.y); }
   };

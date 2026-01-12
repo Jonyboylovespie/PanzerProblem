@@ -26,7 +26,7 @@
     <div>
         <h2>Join a Game</h2>
         <form action="/join" method="post">
-            <input type="text" name="game_code" placeholder="Game Code" value="{{ request.args.get('game_code', '') }}" required>
+            <input type="text" name="game_code" placeholder="Game Code" value="{{ request.args.get("game_code", "") }}" required>
             <input type="text" name="player_name" placeholder="Your Name" required>
             <button type="submit">Join Game</button>
         </form>
