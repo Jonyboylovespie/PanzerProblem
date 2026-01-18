@@ -36,6 +36,15 @@ function readGameConfig() {
   };
 }
 
+function applyDefaultTankAliveFlags() {
+  // Default missing tank.alive to true for backward compatibility.
+  if (!STATE.tanks) return;
+  for (const tank of Object.values(STATE.tanks)) {
+    if (!tank) continue;
+    if (typeof tank.alive !== "boolean") tank.alive = true;
+  }
+}
+
 export function initStateFromDOM() {
   // Hydrate STATE from the DOM.
   STATE.gameCode = getTextContentById("game-code");
@@ -45,4 +54,6 @@ export function initStateFromDOM() {
   STATE.hostName = hostName;
   STATE.started = started;
   STATE.isHost = STATE.hostName === STATE.playerName;
+
+  applyDefaultTankAliveFlags();
 }

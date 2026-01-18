@@ -13,6 +13,14 @@ const FPS_SMOOTHING = 0.9;
 let socket = null;
 let bulletManager = null;
 
+function isAlive(playerName) {
+  // Determine whether a player should be active/visible.
+  const tank = STATE.tanks ? STATE.tanks[playerName] : null;
+  if (!tank) return false;
+  if (typeof tank.alive !== "boolean") return true;
+  return tank.alive;
+}
+
 function emitTankMove(tank) {
   // Emit the local player's tank state.
   socket.emit("tank_move", {
@@ -81,6 +89,7 @@ function applyMovement(tank, deltaSeconds) {
 function handleShooting() {
   // Fire once per keypress when the game is started.
   if (!STATE.started) return;
+  if (!isAlive(STATE.playerName)) return;
   if (!keys[" "]) return;
 
   if (!bulletManager.hasActiveFor(STATE.playerName)) {
@@ -91,8 +100,9 @@ function handleShooting() {
 }
 
 function renderTanks() {
-  // Render every tank.
+  // Render every alive tank.
   for (const [name, tank] of Object.entries(STATE.tanks)) {
+    if (!isAlive(name)) continue;
     drawTank(tank.x, tank.y, tank.angle, tank.color, name);
   }
 }
@@ -146,7 +156,7 @@ function startGame() {
     drawMaze();
 
     const me = STATE.tanks[STATE.playerName];
-    if (me) {
+    if (me && isAlive(STATE.playerName)) {
       const moved = applyMovement(me, deltaSeconds);
       if (moved) emitTankMove(me);
       handleShooting();

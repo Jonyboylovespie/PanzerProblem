@@ -1,6 +1,7 @@
 import math
 import random
 import string
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -98,6 +99,76 @@ def init_player_score(game: Dict[str, Any], player_name: str) -> None:
     # Initialize player score if missing.
     scores = ensure_dict(game, "scores")
     scores.setdefault(player_name, 0)
+
+
+def is_player_alive(game: Dict[str, Any], player_name: str) -> bool:
+    # Return whether a player is alive based on tank state.
+    tank = ensure_dict(game, "tanks").get(player_name)
+    if not tank:
+        return False
+    return bool(tank.get("alive", True))
+
+
+def set_player_alive(game: Dict[str, Any], player_name: str, is_alive: bool) -> None:
+    # Set alive status on the player's tank.
+    tank = ensure_dict(game, "tanks").get(player_name)
+    if not tank:
+        return
+    tank["alive"] = bool(is_alive)
+
+
+def alive_players(game: Dict[str, Any]) -> List[str]:
+    # Return list of alive players.
+    return [p for p in game.get("players", []) if is_player_alive(game, p)]
+
+
+def ensure_game_round(game: Dict[str, Any]) -> Dict[str, Any]:
+    # Ensure the round state sub-dict exists and return it.
+    return ensure_dict(game, "round")
+
+
+def get_round_id(game: Dict[str, Any]) -> int:
+    # Return the current round id.
+    return int(ensure_game_round(game).get("id", 0))
+
+
+def bump_round_id(game: Dict[str, Any]) -> int:
+    # Increment round id and return it.
+    round_state = ensure_game_round(game)
+    round_state["id"] = get_round_id(game) + 1
+    return int(round_state["id"])
+
+
+def mark_round_win_pending(game: Dict[str, Any], winner: str) -> None:
+    # Mark that a win is pending for a winner.
+    round_state = ensure_game_round(game)
+    round_state["win_pending"] = True
+    round_state["winner"] = winner
+
+
+def clear_round_win_pending(game: Dict[str, Any]) -> None:
+    # Clear any pending win state.
+    round_state = ensure_game_round(game)
+    round_state["win_pending"] = False
+    round_state["winner"] = None
+
+
+def start_new_round(game: Dict[str, Any]) -> None:
+    # Start a new round: new maze, respawn everyone, mark alive, clear bullets.
+    bump_round_id(game)
+    clear_round_win_pending(game)
+
+    width = int(10 * random.random() + 5)
+    height = int(10 * random.random() + 5)
+    game["maze"] = generate_maze(width, height)
+
+    for name in game.get("players", []):
+        respawn_player(game, name)
+        tank = ensure_dict(game, "tanks").get(name)
+        if tank:
+            tank["angle"] = 0
+            tank["alive"] = True
+    game["bullets"] = {}
 
 
 def set_player_tank(
@@ -247,6 +318,7 @@ def create_game():
         angle=0,
         color=generate_random_color(),
     )
+    ensure_dict(games[game_code], "tanks")[host_name]["alive"] = True
 
     session["game_code"] = game_code
     session["player_name"] = host_name
@@ -279,6 +351,7 @@ def join_game():
         game, player_name, spawn_x, spawn_y, angle=0, color=generate_random_color()
     )
     init_player_score(game, player_name)
+    ensure_dict(game, "tanks")[player_name]["alive"] = True
 
     session["game_code"] = game_code
     session["player_name"] = player_name
@@ -321,15 +394,7 @@ def on_start_game(data):
     if not game or not can_start_game(game, player_name):
         return
 
-    width = int(10 * random.random() + 5)
-    height = int(10 * random.random() + 5)
-    game["maze"] = generate_maze(width, height)
-
-    for name in game.get("players", []):
-        respawn_player(game, name)
-        ensure_dict(game, "tanks")[name]["angle"] = 0
-
-    game["bullets"] = {}
+    start_new_round(game)
     game["started"] = True
 
     broadcast_game_state(game_code, game)
@@ -344,6 +409,10 @@ def on_tank_move(data):
 
     game = require_game(game_code)
     if not game:
+        return
+    if not game.get("started"):
+        return
+    if not is_player_alive(game, player_name):
         return
 
     tanks = ensure_dict(game, "tanks")
@@ -381,6 +450,8 @@ def on_shoot(data):
     game = require_game(game_code)
     if not game or not game.get("started"):
         return
+    if not is_player_alive(game, player_name):
+        return
 
     tanks = ensure_dict(game, "tanks")
     if player_name not in tanks:
@@ -408,7 +479,7 @@ def on_shoot(data):
 
 @socketio.on("bullet_hit_tank")
 def on_bullet_hit_tank(data):
-    # Handle bullet hit: remove bullet, respawn victim, award points.
+    # Handle bullet hit: eliminate victim until one alive remains, then award and reset.
     game_code = data.get("game_code")
     bullet_id = data.get("bullet_id")
     victim_name = data.get("victim_name")
@@ -419,19 +490,81 @@ def on_bullet_hit_tank(data):
 
     if victim_name not in game.get("players", []):
         return
+    if not is_player_alive(game, victim_name):
+        return
 
     bullets = ensure_dict(game, "bullets")
-    shooter = bullets.get(bullet_id, {}).get("shooter")
     if bullet_id in bullets:
         del bullets[bullet_id]
 
-    respawn_player(game, victim_name)
-
-    if shooter and shooter in game.get("players", []):
-        add_score(game_code, shooter, 1)
+    set_player_alive(game, victim_name, False)
 
     emit("update_bullets", bullets, room=game_code)
     emit("update_tanks", game["tanks"], room=game_code)
+
+    living = alive_players(game)
+    if len(living) == 1:
+        schedule_win_if_survives(game_code, living[0])
+
+
+def schedule_win_if_survives(game_code: str, winner: str) -> None:
+    # Start (or replace) a background 5s survival check for the current round.
+    game = require_game(game_code)
+    if not game or not game.get("started"):
+        return
+
+    if not is_player_alive(game, winner):
+        return
+
+    mark_round_win_pending(game, winner)
+    round_id = get_round_id(game)
+    socketio.start_background_task(check_win_survival, game_code, winner, round_id)
+
+
+def check_win_survival(game_code: str, winner: str, round_id: int) -> None:
+    # Poll up to 5s; if winner dies, reset immediately; if survives, award + reset.
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        game = require_game(game_code)
+        if not game or not game.get("started"):
+            return
+
+        if get_round_id(game) != round_id:
+            return
+
+        current_winner = ensure_game_round(game).get("winner")
+        if current_winner != winner:
+            return
+
+        if not is_player_alive(game, winner):
+            start_new_round(game)
+            broadcast_game_state(game_code, game)
+            socketio.emit("update_scores", ensure_dict(game, "scores"), room=game_code)
+            return
+
+        time.sleep(0.1)
+
+    game = require_game(game_code)
+    if not game or not game.get("started"):
+        return
+
+    if get_round_id(game) != round_id:
+        return
+
+    current_winner = ensure_game_round(game).get("winner")
+    if current_winner != winner:
+        return
+
+    if not is_player_alive(game, winner):
+        start_new_round(game)
+        broadcast_game_state(game_code, game)
+        socketio.emit("update_scores", ensure_dict(game, "scores"), room=game_code)
+        return
+
+    add_score(game_code, winner, 1)
+    start_new_round(game)
+    broadcast_game_state(game_code, game)
+    socketio.emit("update_scores", ensure_dict(game, "scores"), room=game_code)
 
 
 def add_score(game_code: str, player: str, amount: int) -> None:
@@ -441,7 +574,7 @@ def add_score(game_code: str, player: str, amount: int) -> None:
         return
     scores = ensure_dict(game, "scores")
     scores[player] = scores.get(player, 0) + amount
-    emit("update_scores", scores, room=game_code)
+    socketio.emit("update_scores", scores, room=game_code)
 
 
 @socketio.on("disconnect")

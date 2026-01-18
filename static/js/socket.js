@@ -4,6 +4,14 @@ import { canvas } from "./render.js";
 
 const MIN_PLAYERS_TO_START = 2;
 
+function isAlivePlayer(name) {
+  // Determine if a player should be considered alive.
+  const tank = STATE.tanks ? STATE.tanks[name] : null;
+  if (!tank) return false;
+  if (typeof tank.alive === "boolean") return tank.alive;
+  return true;
+}
+
 function getPlayerNames() {
   // Prefer authoritative player list when present; fallback to tank keys.
   if (Array.isArray(STATE.players) && STATE.players.length)
@@ -11,9 +19,14 @@ function getPlayerNames() {
   return Object.keys(STATE.tanks || {});
 }
 
-function getPlayerCount() {
-  // Count players in a consistent way for UI gating.
-  return getPlayerNames().length;
+function getAlivePlayerNames() {
+  // Return only players that are currently alive.
+  return getPlayerNames().filter((name) => isAlivePlayer(name));
+}
+
+function getAlivePlayerCount() {
+  // Count alive players for UI gating.
+  return getAlivePlayerNames().length;
 }
 
 function isStartedFlag(value) {
@@ -52,13 +65,15 @@ function updateStartButton() {
   if (!button) return;
 
   const canStart =
-    STATE.isHost && !STATE.started && getPlayerCount() >= MIN_PLAYERS_TO_START;
+    STATE.isHost &&
+    !STATE.started &&
+    getPlayerNames().length >= MIN_PLAYERS_TO_START;
 
   button.disabled = !canStart;
 }
 
 export function updatePlayersList() {
-  // Render the players UI list with host + score.
+  // Render the players UI list with host + score + dead status.
   const listEl = document.getElementById("players-list");
   if (!listEl) return;
 
@@ -71,7 +86,8 @@ export function updatePlayersList() {
         : 0;
 
     const hostSuffix = name === STATE.hostName ? " (Host)" : "";
-    li.textContent = `${name}${hostSuffix} - Score: ${score}`;
+    const aliveSuffix = isAlivePlayer(name) ? "" : " (Dead)";
+    li.textContent = `${name}${hostSuffix}${aliveSuffix} - Score: ${score}`;
     listEl.appendChild(li);
   }
 }

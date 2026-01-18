@@ -5,6 +5,19 @@ import { drawBullet } from "./render.js";
 const HIT_RADIUS = 15;
 const SPEED_EPSILON = 1e-6;
 
+function isTankAlive(tank) {
+  // Treat missing flag as alive for backward compatibility.
+  if (!tank) return false;
+  if (typeof tank.alive === "boolean") return tank.alive;
+  return true;
+}
+
+function shouldConsiderVictim(name, tank) {
+  // Ignore dead/inactive tanks and missing tanks.
+  if (!name || !tank) return false;
+  return isTankAlive(tank);
+}
+
 function emitBulletRemove(socket, bulletId) {
   // Notify server bullet should be removed.
   socket.emit("bullet_remove", {
@@ -60,8 +73,9 @@ function normalizeVelocityToSpeed(bullet, targetSpeed) {
 }
 
 function findVictimAt(x, y) {
-  // Find the first tank hit at a point.
+  // Find the first alive tank hit at a point.
   for (const [name, tank] of Object.entries(STATE.tanks)) {
+    if (!shouldConsiderVictim(name, tank)) continue;
     if (pointInCircle(x, y, tank.x, tank.y, HIT_RADIUS)) return name;
   }
   return null;
