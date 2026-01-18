@@ -1,29 +1,48 @@
-﻿export const STATE = {
-  gameCode: "",
-  playerName: "",
-  hostName: "",
-  isHost: false,
-  started: false,
-  players: [],
-  scores: {},
-  tanks: {},
-  bullets: {},
-  maze: [],
-  cellSize: 0,
-  wallsReady: false,
-  wallSegments: [],
-  wallRects: []
-};
+﻿function createInitialState() {
+  // Create the initial client-side game state shape.
+  return {
+    gameCode: "",
+    playerName: "",
+    hostName: "",
+    isHost: false,
+    started: false,
+    players: [],
+    scores: {},
+    tanks: {},
+    bullets: {},
+    maze: [],
+    cellSize: 0,
+    wallsReady: false,
+    wallSegments: [],
+    wallRects: [],
+  };
+}
+
+export const STATE = createInitialState();
+
+function getTextContentById(id) {
+  // Read an element's textContent, falling back to "".
+  const el = document.getElementById(id);
+  return el ? el.textContent || "" : "";
+}
+
+function readGameConfig() {
+  // Read dataset values from the game config element.
+  const el = document.getElementById("game-config");
+  if (!el) return { hostName: "", started: false };
+  return {
+    hostName: el.dataset.host || "",
+    started: el.dataset.started === "true",
+  };
+}
 
 export function initStateFromDOM() {
-  const gameCodeEl = document.getElementById("game-code");
-  const playerNameEl = document.getElementById("player-name");
-  const configEl = document.getElementById("game-config");
-  STATE.gameCode = gameCodeEl ? gameCodeEl.textContent : "";
-  STATE.playerName = playerNameEl ? playerNameEl.textContent : "";
-  if (configEl) {
-    STATE.hostName = configEl.dataset.host || "";
-    STATE.isHost = (STATE.hostName === STATE.playerName);
-    STATE.started = (configEl.dataset.started === "true");
-  }
+  // Hydrate STATE from the DOM.
+  STATE.gameCode = getTextContentById("game-code");
+  STATE.playerName = getTextContentById("player-name");
+
+  const { hostName, started } = readGameConfig();
+  STATE.hostName = hostName;
+  STATE.started = started;
+  STATE.isHost = STATE.hostName === STATE.playerName;
 }

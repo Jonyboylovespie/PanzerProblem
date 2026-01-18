@@ -1,6 +1,8 @@
 import math
 import random
 import string
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Flask, flash, redirect, render_template, request, session, url_for
 from flask_socketio import SocketIO, emit, join_room
@@ -10,24 +12,42 @@ app.secret_key = "super_secret_key"
 socketio = SocketIO(app)
 
 # In-memory storage for active games
-games = {}
+games: Dict[str, Dict[str, Any]] = {}
+
+CELL_SIZE = 70
+LOBBY_MAZE_SIZE = (5, 5)
+MIN_PLAYERS_TO_START = 2
+BULLET_SPEED = 300
+BULLET_LIFETIME_SECONDS = 10.0
+TANK_BARREL_OFFSET = 20
 
 
-def generate_game_code(length=6):
-    """Generate a random game code"""
+@dataclass(frozen=True)
+class Tank:
+    x: float
+    y: float
+    angle: float
+    color: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"x": self.x, "y": self.y, "angle": self.angle, "color": self.color}
+
+
+def generate_game_code(length: int = 6) -> str:
+    # Generate a random game code.
     return "".join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 
-def generate_random_color():
-    """Generate a random color for tanks"""
-    H = random.randint(0, 360)
-    S = 100
-    L = 50
-    return f"hsl({H}, {S}%, {L}%)"
+def generate_random_color() -> str:
+    # Generate a random HSL color for tanks.
+    hue = random.randint(0, 360)
+    return f"hsl({hue}, 100%, 50%)"
 
 
-def get_random_spawn(maze, cell_size):
-    """Return (x, y) at centre of a random cell with ≤2 surrounding walls."""
+def get_random_spawn(
+    maze: List[List[Dict[str, Any]]], cell_size: int
+) -> Tuple[float, float]:
+    # Return (x, y) at centre of a random cell.
     height = len(maze)
     width = len(maze[0])
     cx = random.randint(0, width - 1)
@@ -35,15 +55,110 @@ def get_random_spawn(maze, cell_size):
     return cx * cell_size + cell_size / 2, cy * cell_size + cell_size / 2
 
 
+def get_session_player_and_game() -> Tuple[Optional[str], Optional[str]]:
+    # Read session player/game identifiers.
+    return session.get("player_name"), session.get("game_code")
+
+
+def get_game_or_none(game_code: Optional[str]) -> Optional[Dict[str, Any]]:
+    # Return game dict if it exists.
+    if not game_code:
+        return None
+    return games.get(game_code)
+
+
+def require_game(game_code: Optional[str]) -> Optional[Dict[str, Any]]:
+    # Return game dict when present; otherwise None.
+    return get_game_or_none(game_code)
+
+
+def ensure_game_code_unique() -> str:
+    # Generate a unique game code.
+    game_code = generate_game_code()
+    while game_code in games:
+        game_code = generate_game_code()
+    return game_code
+
+
+def ensure_dict(game: Dict[str, Any], key: str) -> Dict[str, Any]:
+    # Ensure a game sub-dict exists and return it.
+    if key not in game or game[key] is None:
+        game[key] = {}
+    return game[key]
+
+
+def ensure_list(game: Dict[str, Any], key: str) -> List[Any]:
+    # Ensure a game list exists and return it.
+    if key not in game or game[key] is None:
+        game[key] = []
+    return game[key]
+
+
+def init_player_score(game: Dict[str, Any], player_name: str) -> None:
+    # Initialize player score if missing.
+    scores = ensure_dict(game, "scores")
+    scores.setdefault(player_name, 0)
+
+
+def set_player_tank(
+    game: Dict[str, Any],
+    player_name: str,
+    x: float,
+    y: float,
+    angle: float = 0,
+    color: Optional[str] = None,
+) -> None:
+    # Set tank state for a player.
+    tanks = ensure_dict(game, "tanks")
+    if color is None:
+        existing = tanks.get(player_name, {})
+        color = existing.get("color") or generate_random_color()
+    tanks[player_name] = Tank(x=x, y=y, angle=angle, color=color).to_dict()
+
+
+def respawn_player(game: Dict[str, Any], player_name: str) -> None:
+    # Respawn a player at a random location, keeping their color.
+    maze = game["maze"]
+    cell_size = game["cell_size"]
+    spawn_x, spawn_y = get_random_spawn(maze, cell_size)
+    existing = ensure_dict(game, "tanks").get(player_name, {})
+    set_player_tank(
+        game,
+        player_name,
+        spawn_x,
+        spawn_y,
+        angle=existing.get("angle", 0),
+        color=existing.get("color"),
+    )
+
+
+def can_start_game(game: Dict[str, Any], player_name: str) -> bool:
+    # Enforce start conditions.
+    if game.get("started"):
+        return False
+    if game.get("host") != player_name:
+        return False
+    return len(game.get("players", [])) >= MIN_PLAYERS_TO_START
+
+
+def broadcast_game_state(game_code: str, game: Dict[str, Any]) -> None:
+    # Broadcast maze + tanks to all players.
+    socketio.emit(
+        "maze_data",
+        {"maze": game["maze"], "cell_size": game["cell_size"]},
+        room=game_code,
+    )
+    socketio.emit("update_tanks", game["tanks"], room=game_code)
+
+
 @app.route("/")
 def home():
     return render_template("home.html")
 
 
-def generate_maze(width, height):
-    """Generate a random maze using depth-first search algorithm"""
-    # Initialize grid with walls everywhere
-    maze = [
+def generate_maze(width: int, height: int) -> List[List[Dict[str, Any]]]:
+    # Generate a random maze using DFS/backtracking.
+    maze: List[List[Dict[str, Any]]] = [
         [
             {"top": True, "right": True, "bottom": True, "left": True, "visited": False}
             for _ in range(width)
@@ -51,68 +166,53 @@ def generate_maze(width, height):
         for _ in range(height)
     ]
 
-    # Stack for backtracking
-    stack = []
-
-    # Start at random cell
+    stack: List[Tuple[int, int]] = []
     x, y = random.randint(0, width - 1), random.randint(0, height - 1)
     maze[y][x]["visited"] = True
     stack.append((x, y))
 
-    # Directions: right, down, left, up
-    directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+    dirs = [(1, 0), (0, 1), (-1, 0), (0, -1)]
     walls = ["right", "bottom", "left", "top"]
-    opposite_walls = ["left", "top", "right", "bottom"]
+    opposite = ["left", "top", "right", "bottom"]
 
-    # DFS maze generation
     while stack:
         x, y = stack[-1]
+        neighbors: List[Tuple[int, int, int]] = []
 
-        # Find unvisited neighbors
-        neighbors = []
-        for i, (dx, dy) in enumerate(directions):
+        for i, (dx, dy) in enumerate(dirs):
             nx, ny = x + dx, y + dy
             if 0 <= nx < width and 0 <= ny < height and not maze[ny][nx]["visited"]:
                 neighbors.append((nx, ny, i))
 
-        if neighbors:
-            # Choose random unvisited neighbor
-            nx, ny, direction = random.choice(neighbors)
-
-            # Remove walls between current cell and chosen cell
-            maze[y][x][walls[direction]] = False
-            maze[ny][nx][opposite_walls[direction]] = False
-
-            # Mark as visited and add to stack
-            maze[ny][nx]["visited"] = True
-            stack.append((nx, ny))
-        else:
-            # Backtrack
+        if not neighbors:
             stack.pop()
-            
-    for y in range(height):
-        for x in range(width):
-            del maze[y][x]["visited"]
+            continue
+
+        nx, ny, direction = random.choice(neighbors)
+        maze[y][x][walls[direction]] = False
+        maze[ny][nx][opposite[direction]] = False
+        maze[ny][nx]["visited"] = True
+        stack.append((nx, ny))
+
+    for yy in range(height):
+        for xx in range(width):
+            del maze[yy][xx]["visited"]
 
     return maze
 
 
-def generate_empty_maze(width, height):
-    """Generate an almost-empty maze for lobby: only border walls."""
-    maze = []
+def generate_empty_maze(width: int, height: int) -> List[List[Dict[str, bool]]]:
+    # Generate a lobby maze with only border walls.
+    maze: List[List[Dict[str, bool]]] = []
     for y in range(height):
-        row = []
+        row: List[Dict[str, bool]] = []
         for x in range(width):
-            cell = {"top": False, "right": False, "bottom": False, "left": False}
-            # Add border walls on outer edges
-            if y == 0:
-                cell["top"] = True
-            if y == height - 1:
-                cell["bottom"] = True
-            if x == 0:
-                cell["left"] = True
-            if x == width - 1:
-                cell["right"] = True
+            cell = {
+                "top": y == 0,
+                "bottom": y == height - 1,
+                "left": x == 0,
+                "right": x == width - 1,
+            }
             row.append(cell)
         maze.append(row)
     return maze
@@ -120,86 +220,68 @@ def generate_empty_maze(width, height):
 
 @app.route("/create", methods=["POST"])
 def create_game():
+    # Create a new lobby game and redirect host into it.
     host_name = request.form.get("host_name")
-    game_code = generate_game_code()
+    game_code = ensure_game_code_unique()
 
-    # Ensure unique code
-    while game_code in games:
-        game_code = generate_game_code()
-
-    # Lobby phase uses a fixed 5x5 empty maze
-    width = 5
-    height = 5
+    width, height = LOBBY_MAZE_SIZE
     maze = generate_empty_maze(width, height)
-    cell_size = 70
-    spawn_x, spawn_y = get_random_spawn(maze, cell_size)
+    spawn_x, spawn_y = get_random_spawn(maze, CELL_SIZE)
+
     games[game_code] = {
         "host": host_name,
         "players": [host_name],
         "active": True,
         "started": False,
         "maze": maze,
-        "cell_size": cell_size,
+        "cell_size": CELL_SIZE,
         "scores": {host_name: 0},
-        "tanks": {
-            host_name: {
-                "x": spawn_x,
-                "y": spawn_y,
-                "angle": 0,
-                "color": generate_random_color(),
-            }
-        },
+        "tanks": {},
         "bullets": {},
     }
+    set_player_tank(
+        games[game_code],
+        host_name,
+        spawn_x,
+        spawn_y,
+        angle=0,
+        color=generate_random_color(),
+    )
 
     session["game_code"] = game_code
     session["player_name"] = host_name
-
     return redirect(url_for("game", code=game_code))
 
 
 @app.route("/join", methods=["POST"])
 def join_game():
+    # Join an existing active game as a new player.
     game_code = request.form.get("game_code").upper()
     player_name = request.form.get("player_name")
 
-    if game_code not in games:
+    game = require_game(game_code)
+    if not game:
         flash("Game not found!")
         return redirect(url_for("home"))
 
-    if not games[game_code]["active"]:
+    if not game.get("active"):
         flash("Game is no longer active!")
         return redirect(url_for("home"))
 
-    if player_name in games[game_code]["players"]:
+    players = ensure_list(game, "players")
+    if player_name in players:
         flash("Player with this name already exists!")
         return redirect(url_for("home"))
 
-    games[game_code]["players"].append(player_name)
-
-    cell_size = games[game_code]["cell_size"]
-    maze = games[game_code]["maze"]
-    spawn_x, spawn_y = get_random_spawn(maze, cell_size)
-
-    # Create tank for new player
-    if "tanks" not in games[game_code]:
-        games[game_code]["tanks"] = {}
-
-    games[game_code]["tanks"][player_name] = {
-        "x": spawn_x,
-        "y": spawn_y,
-        "angle": 0,
-        "color": generate_random_color(),
-    }
-
-    # Initialize score for new player
-    if "scores" not in games[game_code]:
-        games[game_code]["scores"] = {}
-    games[game_code]["scores"][player_name] = 0
+    players.append(player_name)
+    spawn_x, spawn_y = get_random_spawn(game["maze"], game["cell_size"])
+    set_player_tank(
+        game, player_name, spawn_x, spawn_y, angle=0, color=generate_random_color()
+    )
+    init_player_score(game, player_name)
 
     session["game_code"] = game_code
     session["player_name"] = player_name
-
     return redirect(url_for("game", code=game_code))
 
 
@@ -231,67 +313,47 @@ def on_join(data):
 
 @socketio.on("start_game")
 def on_start_game(data):
+    # Start the real game (host-only) and broadcast fresh state.
     game_code = data.get("game_code")
     player_name = data.get("player_name")
 
-    if not (game_code and game_code in games):
+    game = require_game(game_code)
+    if not game or not can_start_game(game, player_name):
         return
 
-    game = games[game_code]
-
-    # Only host can start, and only once, and require 2+ players
-    if game.get("started") or game.get("host") != player_name:
-        return
-    if len(game.get("players", [])) < 2:
-        return
-
-    # Generate a new random maze for the real game
     width = int(10 * random.random() + 5)
     height = int(10 * random.random() + 5)
-    maze = generate_maze(width, height)
-    game["maze"] = maze
+    game["maze"] = generate_maze(width, height)
 
-    cell_size = game["cell_size"]
+    for name in game.get("players", []):
+        respawn_player(game, name)
+        ensure_dict(game, "tanks")[name]["angle"] = 0
 
-    # Respawn all players at random maze positions
-    for name in game["players"]:
-        spawn_x, spawn_y = get_random_spawn(maze, cell_size)
-        existing = game["tanks"].get(name, {})
-        game["tanks"][name] = {
-            "x": spawn_x,
-            "y": spawn_y,
-            "angle": 0,
-            "color": existing.get("color", generate_random_color()),
-        }
-
-    # Clear bullets and mark started
     game["bullets"] = {}
     game["started"] = True
 
-    # Send new maze and tank positions to all clients
-    socketio.emit(
-        "maze_data",
-        {"maze": game["maze"], "cell_size": game["cell_size"]},
-        room=game_code,
-    )
-
-    socketio.emit("update_tanks", game["tanks"], room=game_code)
+    broadcast_game_state(game_code, game)
     socketio.emit("game_started", {"started": True}, room=game_code)
 
 
 @socketio.on("tank_move")
 def on_tank_move(data):
+    # Update a player's tank state and broadcast it.
     game_code = data.get("game_code")
     player_name = data.get("player_name")
 
-    if game_code and game_code in games and player_name in games[game_code]["tanks"]:
-        # Update tank position
-        games[game_code]["tanks"][player_name]["x"] = data.get("x")
-        games[game_code]["tanks"][player_name]["y"] = data.get("y")
-        games[game_code]["tanks"][player_name]["angle"] = data.get("angle")
+    game = require_game(game_code)
+    if not game:
+        return
 
-        # Broadcast new positions to all players
-        emit("update_tanks", games[game_code]["tanks"], room=game_code)
+    tanks = ensure_dict(game, "tanks")
+    if player_name not in tanks:
+        return
+
+    tanks[player_name]["x"] = data.get("x")
+    tanks[player_name]["y"] = data.get("y")
+    tanks[player_name]["angle"] = data.get("angle")
+    emit("update_tanks", tanks, room=game_code)
 
 
 @socketio.on("bullet_state")
@@ -312,112 +374,108 @@ def on_bullet_state(data):
 
 @socketio.on("shoot")
 def on_shoot(data):
+    # Spawn a bullet for the player (one active bullet per shooter).
     game_code = data.get("game_code")
     player_name = data.get("player_name")
 
-    if game_code and game_code in games and player_name in games[game_code]["tanks"]:
-        if not games[game_code].get("started"):
-            # No shooting in lobby
+    game = require_game(game_code)
+    if not game or not game.get("started"):
+        return
+
+    tanks = ensure_dict(game, "tanks")
+    if player_name not in tanks:
+        return
+
+    bullets = ensure_dict(game, "bullets")
+    for bullet in bullets.values():
+        if bullet.get("shooter") == player_name:
             return
-        # Enforce one active bullet per shooter
-        for b_id, b in games[game_code]["bullets"].items():
-            if b.get("shooter") == player_name:
-                # Already has an active bullet; ignore shoot request
-                return
 
-        tank = games[game_code]["tanks"][player_name]
-        bullet_speed = 300
+    tank = tanks[player_name]
+    bullet_id = f"{player_name}_{len(bullets)}"
+    angle = tank["angle"]
 
-        bullet_id = f"{player_name}_{len(games[game_code]['bullets'])}"
-
-        games[game_code]["bullets"][bullet_id] = {
-            "x": tank["x"] + 20 * math.cos(tank["angle"]),
-            "y": tank["y"] + 20 * math.sin(tank["angle"]),
-            "vx": bullet_speed * math.cos(tank["angle"]),
-            "vy": bullet_speed * math.sin(tank["angle"]),
-            "shooter": player_name,
-            "lifetime": 10.0,
-        }
-
-        # Broadcast new bullet to all players
-        emit("update_bullets", games[game_code]["bullets"], room=game_code)
+    bullets[bullet_id] = {
+        "x": tank["x"] + TANK_BARREL_OFFSET * math.cos(angle),
+        "y": tank["y"] + TANK_BARREL_OFFSET * math.sin(angle),
+        "vx": BULLET_SPEED * math.cos(angle),
+        "vy": BULLET_SPEED * math.sin(angle),
+        "shooter": player_name,
+        "lifetime": BULLET_LIFETIME_SECONDS,
+    }
+    emit("update_bullets", bullets, room=game_code)
 
 
 @socketio.on("bullet_hit_tank")
 def on_bullet_hit_tank(data):
+    # Handle bullet hit: remove bullet, respawn victim, award points.
     game_code = data.get("game_code")
     bullet_id = data.get("bullet_id")
     victim_name = data.get("victim_name")
 
-    if game_code and game_code in games and victim_name in games[game_code]["players"]:
-        if not games[game_code].get("started"):
-            # Ignore hits while in lobby
-            return
+    game = require_game(game_code)
+    if not game or not game.get("started"):
+        return
 
-        # Determine shooter (if available) and remove the bullet
-        shooter = None
-        if bullet_id in games[game_code]["bullets"]:
-            shooter = games[game_code]["bullets"][bullet_id].get("shooter")
-            del games[game_code]["bullets"][bullet_id]
+    if victim_name not in game.get("players", []):
+        return
 
-        # Respawn the victim
-        cell_size = games[game_code]["cell_size"]
-        maze = games[game_code]["maze"]
-        spawn_x, spawn_y = get_random_spawn(maze, cell_size)
+    bullets = ensure_dict(game, "bullets")
+    shooter = bullets.get(bullet_id, {}).get("shooter")
+    if bullet_id in bullets:
+        del bullets[bullet_id]
 
-        games[game_code]["tanks"][victim_name] = {
-            "x": spawn_x,
-            "y": spawn_y,
-            "angle": games[game_code]["tanks"][victim_name]["angle"],
-            "color": games[game_code]["tanks"][victim_name]["color"],
-        }
+    respawn_player(game, victim_name)
 
-        # Award point to shooter if present
-        if shooter and shooter in games[game_code]["players"]:
-            if "scores" not in games[game_code]:
-                games[game_code]["scores"] = {}
-            add_score(game_code, shooter, 1)
+    if shooter and shooter in game.get("players", []):
+        add_score(game_code, shooter, 1)
 
-        # Broadcast updates
-        emit("update_bullets", games[game_code]["bullets"], room=game_code)
-        emit("update_tanks", games[game_code]["tanks"], room=game_code)
+    emit("update_bullets", bullets, room=game_code)
+    emit("update_tanks", game["tanks"], room=game_code)
 
 
-def add_score(game_code, player, amount):
-    games[game_code]["scores"].setdefault(player, 0)
-    games[game_code]["scores"][player] += amount
-    emit("update_scores", games[game_code]["scores"], room=game_code)
+def add_score(game_code: str, player: str, amount: int) -> None:
+    # Add points to a player's score and broadcast the scoreboard.
+    game = require_game(game_code)
+    if not game:
+        return
+    scores = ensure_dict(game, "scores")
+    scores[player] = scores.get(player, 0) + amount
+    emit("update_scores", scores, room=game_code)
 
 
 @socketio.on("disconnect")
 def on_disconnect():
-    player_name = session.get("player_name")
-    game_code = session.get("game_code")
+    # Remove disconnecting player and update remaining clients.
+    player_name, game_code = get_session_player_and_game()
+    game = require_game(game_code)
 
-    if game_code and game_code in games and player_name in games[game_code]["players"]:
-        # Remove player from game
-        games[game_code]["players"].remove(player_name)
-        
-        if "tanks" in games[game_code] and player_name in games[game_code]["tanks"]:
-            del games[game_code]["tanks"][player_name]
-            
-        if "scores" in games[game_code] and player_name in games[game_code]["scores"]:
-            del games[game_code]["scores"][player_name]
+    if not game or not player_name:
+        return
 
-        # If the host left, either end game or assign new host
-        if player_name == games[game_code]["host"] and games[game_code]["players"]:
-            games[game_code]["host"] = games[game_code]["players"][0]
+    players = ensure_list(game, "players")
+    if player_name not in players:
+        return
 
-        # If no players left, remove the game
-        if not games[game_code]["players"]:
-            games[game_code]["active"] = False
+    players.remove(player_name)
 
-        # Notify remaining players
-        emit(
-            "player_left",
-            {"player_name": player_name, "game_data": games[game_code]},
-            room=game_code,
-        )
+    tanks = ensure_dict(game, "tanks")
+    tanks.pop(player_name, None)
+
+    scores = ensure_dict(game, "scores")
+    scores.pop(player_name, None)
+
+    if player_name == game.get("host") and players:
+        game["host"] = players[0]
+
+    if not players:
+        game["active"] = False
+
+    emit(
+        "player_left",
+        {"player_name": player_name, "game_data": game},
+        room=game_code,
+    )
 
 
 @socketio.on("request_maze")

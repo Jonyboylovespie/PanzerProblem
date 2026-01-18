@@ -4,24 +4,28 @@
         <title>Game Room</title>
         <link
             rel="stylesheet"
-            href="{{ url_for("static", filename="css/game.css") }}"
+            href="{{ url_for('static', filename='css/game.css') }}"
         />
         <script type="module">
-          import { STATE } from "{{ url_for('static', filename='js/state.js') }}";
-          STATE.players = {{ game_data.players | tojson }};
-          STATE.scores = {{ (game_data.scores | default({})) | tojson }};
+            import { STATE } from "{{ url_for('static', filename='js/state.js') }}";
+
+            const configEl = document.getElementById("game-config");
+            STATE.players = JSON.parse(configEl.dataset.players || "[]");
+            STATE.scores = JSON.parse(configEl.dataset.scores || "{}");
         </script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
         <script
             type="module"
-            src="{{ url_for("static", filename="js/main.js") }}"
+            src="{{ url_for('static', filename='js/main.js') }}"
         ></script>
     </head>
     <body>
         <div
             id="game-config"
             data-host="{{ game_data.host }}"
-            data-started="{{ "true" if game_data.started else "false" if game_data.started is defined else "false" }}"
+            data-started="{{ 'true' if game_data.started else 'false' }}"
+            data-players="{{ game_data.players | tojson }}"
+            data-scores="{{ (game_data.scores | default({})) | tojson }}"
         ></div>
         <p>Game Code: <strong id="game-code">{{ game_code }}</strong></p>
         <div id="fps-counter">FPS: --</div>
