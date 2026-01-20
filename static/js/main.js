@@ -13,6 +13,46 @@ const FPS_SMOOTHING = 0.9;
 let socket = null;
 let bulletManager = null;
 
+function attachCopyCodeButton() {
+  // Wire up the "Copy" button for the game code.
+  const btn = document.getElementById("copy-code-button");
+  const codeEl = document.getElementById("game-code");
+  if (!btn || !codeEl) return;
+
+  btn.addEventListener("click", async () => {
+    const code = (codeEl.textContent || "").trim();
+    if (!code) return;
+
+    const setCopied = (copied) => {
+      btn.textContent = copied ? "Copied!" : "Copy";
+    };
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(code);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+        return;
+      }
+    } catch (_) {}
+
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = code;
+      ta.setAttribute("readonly", "true");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (_) {}
+  });
+}
+
 function isAlive(playerName) {
   // Determine whether a player should be active/visible.
   const tank = STATE.tanks ? STATE.tanks[playerName] : null;
@@ -141,6 +181,7 @@ function startGame() {
 
   attachStartButtonIfHost();
   attachLeaveButton();
+  attachCopyCodeButton();
 
   const fpsEl = document.getElementById("fps-counter");
   const fpsState = { value: 0 };

@@ -2,6 +2,7 @@
 <html>
     <head>
         <title>Game Room</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link
             rel="stylesheet"
             href="{{ url_for('static', filename='css/game.css') }}"
@@ -27,28 +28,34 @@
             data-players="{{ game_data.players | tojson }}"
             data-scores="{{ (game_data.scores | default({})) | tojson }}"
         ></div>
-        <p>Game Code: <strong id="game-code">{{ game_code }}</strong></p>
-        <div id="fps-counter">FPS: --</div>
-        <div id="game-container">
-            <canvas id="game-canvas" width="800" height="600"></canvas>
+        <div id="hud">
+            <p>
+                Game Code:
+                <strong id="game-code">{{ game_code }}</strong>
+                <button id="copy-code-button" type="button">Copy</button>
+            </p>
+            <div id="fps-counter">FPS: --</div>
+            {% if player_name == game_data.host %}
+            <button id="start-button">Start Game</button>
+            {% endif %}
+            <button id="leave-button">Leave Game</button>
+            <h2>Players</h2>
+            <ul id="players-list">
+                {% for player in game_data.players %}
+                <li>
+                    {{ player }}{% if player == game_data.host %} (Host){% endif
+                    %}
+                </li>
+                {% endfor %}
+            </ul>
+            <p>
+                You are playing as:
+                <strong id="player-name">{{ player_name }}</strong>
+            </p>
         </div>
-        <h2>Players</h2>
-        <ul id="players-list">
-            {% for player in game_data.players %}
-            <li>
-                {{ player }}{% if player == game_data.host %} (Host){% endif %}
-            </li>
-            {% endfor %}
-        </ul>
-        <p>
-            You are playing as:
-            <strong id="player-name">{{ player_name }}</strong>
-        </p>
 
-        {% if player_name == game_data.host %}
-        <button id="start-button">Start Game</button>
-        {% endif %}
-
-        <button id="leave-button">Leave Game</button>
+        <div id="game-container">
+            <canvas id="game-canvas"></canvas>
+        </div>
     </body>
 </html>

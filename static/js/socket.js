@@ -4,6 +4,169 @@ import { canvas } from "./render.js";
 
 const MIN_PLAYERS_TO_START = 2;
 
+function clampPositiveInt(value, fallback) {
+  // Clamp to a positive integer fallback.
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const i = Math.floor(n);
+  return i > 0 ? i : fallback;
+}
+
+function getCanvasExtraCssPixels() {
+  // Read canvas CSS border/padding to avoid fitting slightly too large.
+  if (!canvas) return { w: 0, h: 0 };
+
+  const style = window.getComputedStyle(canvas);
+  const px = (v) => {
+    const n = parseFloat(v || "0");
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const bw = px(style.borderLeftWidth) + px(style.borderRightWidth);
+  const bh = px(style.borderTopWidth) + px(style.borderBottomWidth);
+  const pw = px(style.paddingLeft) + px(style.paddingRight);
+  const ph = px(style.paddingTop) + px(style.paddingBottom);
+
+  return { w: bw + pw, h: bh + ph };
+}
+
+function getViewportSize() {
+  // Read the current viewport size in CSS pixels.
+  const w = window.innerWidth || document.documentElement.clientWidth || 0;
+  const h = window.innerHeight || document.documentElement.clientHeight || 0;
+  return { w, h };
+}
+
+function getGameContainerSize() {
+  // Measure the container to size the canvas to, falling back to viewport.
+  const container = document.getElementById("game-container");
+  const rect = container ? container.getBoundingClientRect() : null;
+  const w = rect ? rect.width : 0;
+  const h = rect ? rect.height : 0;
+
+  const viewport = getViewportSize();
+  return {
+    w: w > 0 ? w : viewport.w,
+    h: h > 0 ? h : viewport.h,
+  };
+}
+
+function getFullscreenElement() {
+  // Return the current fullscreen element across vendors.
+  return (
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    document.mozFullScreenElement ||
+    document.msFullscreenElement ||
+    null
+  );
+}
+
+function requestFullscreen(el) {
+  // Enter fullscreen across vendors where available.
+  if (!el) return;
+  const fn =
+    el.requestFullscreen ||
+    el.webkitRequestFullscreen ||
+    el.mozRequestFullScreen ||
+    el.msRequestFullscreen;
+  if (typeof fn === "function") fn.call(el);
+}
+
+function exitFullscreen() {
+  // Exit fullscreen across vendors where available.
+  const fn =
+    document.exitFullscreen ||
+    document.webkitExitFullscreen ||
+    document.mozCancelFullScreen ||
+    document.msExitFullscreen;
+  if (typeof fn === "function") fn.call(document);
+}
+
+function toggleFullscreen(targetEl) {
+  // Toggle fullscreen for the given element (or current fullscreen state).
+  if (getFullscreenElement()) exitFullscreen();
+  else requestFullscreen(targetEl);
+}
+
+function calculateCanvasPixelSizeForMaze() {
+  // Compute the maze's unscaled pixel size.
+  if (!STATE.maze || !STATE.maze.length) return { w: 0, h: 0 };
+  const mazeW = STATE.maze[0].length;
+  const mazeH = STATE.maze.length;
+  return { w: mazeW * STATE.cellSize, h: mazeH * STATE.cellSize };
+}
+
+function fitCanvasToDisplayForMaze() {
+  // Resize canvas to fill available area via CSS while keeping internal pixel grid.
+  if (!canvas || !STATE.maze || !STATE.maze.length) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const css = getGameContainerSize();
+
+  const extras = getCanvasExtraCssPixels();
+  const availableCssW = Math.max(1, Math.floor(css.w - extras.w));
+  const availableCssH = Math.max(1, Math.floor(css.h - extras.h));
+
+  const mazePx = calculateCanvasPixelSizeForMaze();
+  if (!mazePx.w || !mazePx.h) return;
+
+  const scale = Math.min(availableCssW / mazePx.w, availableCssH / mazePx.h);
+  const cssW = Math.max(1, Math.floor(mazePx.w * scale));
+  const cssH = Math.max(1, Math.floor(mazePx.h * scale));
+
+  canvas.style.width = cssW + "px";
+  canvas.style.height = cssH + "px";
+
+  const bufferW = clampPositiveInt(Math.floor(cssW * dpr), 1);
+  const bufferH = clampPositiveInt(Math.floor(cssH * dpr), 1);
+
+  canvas.width = bufferW;
+  canvas.height = bufferH;
+
+  const ctx = canvas.getContext("2d");
+  const safeScaleX = bufferW / dpr / mazePx.w;
+  const safeScaleY = bufferH / dpr / mazePx.h;
+  const safeScale = Math.min(safeScaleX, safeScaleY);
+
+  if (ctx) ctx.setTransform(dpr * safeScale, 0, 0, dpr * safeScale, 0, 0);
+}
+
+function attachFullscreenSupportOnce() {
+  // Add a fullscreen toggle button and keep canvas fit synced with fullscreen.
+  if (document.getElementById("fullscreen-button")) return;
+
+  const container = document.getElementById("game-container");
+  if (!container) return;
+
+  const btn = document.createElement("button");
+  btn.id = "fullscreen-button";
+  btn.type = "button";
+  btn.textContent = "Fullscreen";
+
+  btn.addEventListener("click", () => {
+    toggleFullscreen(container);
+  });
+
+  container.insertAdjacentElement("beforebegin", btn);
+
+  const onFullscreenChange = () => {
+    const fs = !!getFullscreenElement();
+    btn.textContent = fs ? "Exit Fullscreen" : "Fullscreen";
+    fitCanvasToDisplayForMaze();
+  };
+
+  document.addEventListener("fullscreenchange", onFullscreenChange);
+  document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+  document.addEventListener("mozfullscreenchange", onFullscreenChange);
+  document.addEventListener("MSFullscreenChange", onFullscreenChange);
+
+  window.addEventListener("resize", () => fitCanvasToDisplayForMaze());
+  window.addEventListener("orientationchange", () =>
+    fitCanvasToDisplayForMaze(),
+  );
+}
+
 function isAlivePlayer(name) {
   // Determine if a player should be considered alive.
   const tank = STATE.tanks ? STATE.tanks[name] : null;
@@ -114,11 +277,8 @@ function applyMazeData(data) {
   STATE.maze = data.maze;
   STATE.cellSize = data.cell_size;
 
-  if (canvas && STATE.maze && STATE.maze.length) {
-    canvas.width = STATE.maze[0].length * STATE.cellSize;
-    canvas.height = STATE.maze.length * STATE.cellSize;
-  }
-
+  attachFullscreenSupportOnce();
+  fitCanvasToDisplayForMaze();
   rebuildWalls();
 }
 
