@@ -11,6 +11,7 @@ const TANK_BARREL = { w: 20, h: 6, x: 0, y: -3 };
 const LABEL = { color: "#000", font: "12px Arial", x: -10, y: -15 };
 
 const BULLET = { radius: 4, color: "#000" };
+const PICKUP = { radius: 10, color: "#FFD700" };
 
 export function initRender() {
   canvas = document.getElementById("game-canvas");
@@ -48,9 +49,9 @@ export function drawMaze() {
   for (const seg of STATE.wallSegments) drawWallSegment(seg);
 }
 
-export function drawTank(x, y, angle, color, name) {
+export function drawTank(x, y, angle, color, name, weapon = "default") {
+  // Draw the tank with highlights if a special weapon is active.
   if (!ctx) return;
-
   withContext(
     () => {
       ctx.translate(x, y);
@@ -59,25 +60,79 @@ export function drawTank(x, y, angle, color, name) {
     () => {
       ctx.fillStyle = color;
       ctx.fillRect(TANK_BODY.x, TANK_BODY.y, TANK_BODY.w, TANK_BODY.h);
+      if (weapon !== "default") {
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(TANK_BODY.x, TANK_BODY.y, TANK_BODY.w, TANK_BODY.h);
+        ctx.fillStyle = "white";
+      }
       ctx.fillRect(TANK_BARREL.x, TANK_BARREL.y, TANK_BARREL.w, TANK_BARREL.h);
     },
   );
-
-  drawTankLabel(x, y, name);
+  drawTankLabel(x, y, name, weapon);
 }
 
-function drawTankLabel(x, y, name) {
-  // Draw player label above the tank.
+function drawTankLabel(x, y, name, weapon = "default") {
+  // Draw player label and weapon status above the tank.
   if (!ctx) return;
   ctx.fillStyle = LABEL.color;
   ctx.font = LABEL.font;
-  ctx.fillText(name, x + LABEL.x, y + LABEL.y);
+  const label = weapon === "default" ? name : `${name} [${weapon}]`;
+  ctx.fillText(label, x + LABEL.x, y + LABEL.y);
 }
 
-export function drawBullet(x, y) {
+export function drawBullet(x, y, type = "default") {
+  // Draw bullet with distinct visuals for Frag, Laser, and other special weapons.
   if (!ctx) return;
-  ctx.fillStyle = BULLET.color;
+  const isSpecial = type !== "default";
+  ctx.fillStyle =
+    type === "laser" ? "#F00" : isSpecial ? "#FFD700" : BULLET.color;
   ctx.beginPath();
-  ctx.arc(x, y, BULLET.radius, 0, 2 * Math.PI);
+  const radius =
+    type === "frag"
+      ? BULLET.radius + 2
+      : isSpecial && type !== "laser"
+        ? BULLET.radius + 1
+        : BULLET.radius;
+  ctx.arc(x, y, radius, 0, 2 * Math.PI);
   ctx.fill();
+  if (isSpecial) {
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+export function drawLaserTrail(trail) {
+  // Draw a fading red trail for the laser.
+  if (!ctx || !trail || trail.length < 2) return;
+  ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(trail[0].x, trail[0].y);
+  for (let i = 1; i < trail.length; i++) ctx.lineTo(trail[i].x, trail[i].y);
+  ctx.stroke();
+}
+
+export function drawPickups() {
+  // Draw all weapon pickups in the maze.
+  if (!ctx || !STATE.pickups) return;
+  for (const p of STATE.pickups) drawPickup(p);
+}
+
+function drawPickup(p) {
+  // Draw a single pickup item.
+  withContext(
+    () => {},
+    () => {
+      ctx.fillStyle = PICKUP.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, PICKUP.radius, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.fillStyle = "#000";
+      ctx.font = "10px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText(p.type.toUpperCase(), p.x, p.y + 4);
+    },
+  );
 }

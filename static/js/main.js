@@ -2,7 +2,7 @@
 import { initInput, keys } from "./input.js";
 import { attemptMoveAndResolve, attemptRotate } from "./movement.js";
 import { createBulletManager } from "./bullets.js";
-import { drawMaze, drawTank, initRender, ctx } from "./render.js";
+import { drawMaze, drawPickups, drawTank, initRender, ctx } from "./render.js";
 import { initSocket, updatePlayersList } from "./socket.js";
 
 const MOVE_SPEED_PIXELS_PER_SEC = 150;
@@ -128,9 +128,7 @@ function applyMovement(tank, deltaSeconds) {
 
 function handleShooting() {
   // Fire once per keypress when the game is started.
-  if (!STATE.started) return;
-  if (!isAlive(STATE.playerName)) return;
-  if (!keys[" "]) return;
+  if (!STATE.started || !isAlive(STATE.playerName) || !keys[" "]) return;
 
   if (!bulletManager.hasActiveFor(STATE.playerName)) {
     bulletManager.spawnFromTank(STATE.playerName);
@@ -139,11 +137,25 @@ function handleShooting() {
   keys[" "] = false;
 }
 
+function handlePickups(me) {
+  // Check if local player is touching any pickup.
+  if (!STATE.pickups) return;
+  for (const p of STATE.pickups) {
+    if (Math.hypot(me.x - p.x, me.y - p.y) < 20) {
+      socket.emit("claim_pickup", {
+        game_code: STATE.gameCode,
+        player_name: STATE.playerName,
+        pickup_id: p.id,
+      });
+    }
+  }
+}
+
 function renderTanks() {
   // Render every alive tank.
   for (const [name, tank] of Object.entries(STATE.tanks)) {
     if (!isAlive(name)) continue;
-    drawTank(tank.x, tank.y, tank.angle, tank.color, name);
+    drawTank(tank.x, tank.y, tank.angle, tank.color, name, tank.weapon);
   }
 }
 
@@ -195,12 +207,14 @@ function startGame() {
     updateFpsCounter(fpsEl, fpsState, deltaSeconds);
     clearCanvas();
     drawMaze();
+    drawPickups();
 
     const me = STATE.tanks[STATE.playerName];
     if (me && isAlive(STATE.playerName)) {
       const moved = applyMovement(me, deltaSeconds);
       if (moved) emitTankMove(me);
       handleShooting();
+      handlePickups(me);
     }
 
     bulletManager.update(deltaSeconds);

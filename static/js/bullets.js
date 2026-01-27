@@ -1,6 +1,6 @@
 ﻿import { STATE } from "./state.js";
 import { pointInCircle, pointInRect } from "./helpers.js";
-import { drawBullet } from "./render.js";
+import { drawBullet, drawLaserTrail, ctx } from "./render.js";
 
 const HIT_RADIUS = 15;
 const SPEED_EPSILON = 1e-6;
@@ -82,25 +82,28 @@ function findVictimAt(x, y) {
 }
 
 function stepBullet(bullet, deltaSeconds) {
-  // Advance a bullet and bounce it off walls.
+  // Advance a bullet and bounce it off walls (fragments die on hit).
   const originalSpeed = Math.hypot(bullet.vx, bullet.vy) || 0;
+  const isFragment = bullet.weapon_type === "fragment";
 
   let nextX = bullet.x + bullet.vx * deltaSeconds;
   let nextY = bullet.y + bullet.vy * deltaSeconds;
 
   if (willHitWallAtX(nextX, bullet.y)) {
+    if (isFragment) return { nextX, nextY, hitWall: true };
     bullet.vx = -bullet.vx;
     nextX = bullet.x + bullet.vx * deltaSeconds;
   }
 
   if (willHitWallAtY(bullet.x, nextY)) {
+    if (isFragment) return { nextX, nextY, hitWall: true };
     bullet.vy = -bullet.vy;
     nextY = bullet.y + bullet.vy * deltaSeconds;
   }
 
   if (originalSpeed > 0) normalizeVelocityToSpeed(bullet, originalSpeed);
 
-  return { nextX, nextY };
+  return { nextX, nextY, hitWall: false };
 }
 
 function tickLifetime(bullet, deltaSeconds) {
@@ -123,47 +126,114 @@ function removeBullets(socket, bulletIds) {
 }
 
 function hasActiveBulletFor(shooterName) {
-  // Enforce one bullet per shooter.
-  return Object.values(STATE.bullets).some((b) => b.shooter === shooterName);
+  // Allow the server to manage weapon limits and state authority.
+  return false;
 }
 
 function requestSpawnBullet(socket, shooterName) {
-  // Ask server to spawn a bullet for shooter.
-  socket.emit("shoot", { game_code: STATE.gameCode, player_name: shooterName });
+  // Ask server to spawn a bullet; include coordinates for Frag detonation.
+  const data = { game_code: STATE.gameCode, player_name: shooterName };
+  const tank = STATE.tanks[shooterName];
+
+  if (tank && tank.weapon === "frag") {
+    const frag = Object.values(STATE.bullets).find(
+      (b) => b.shooter === shooterName && b.weapon_type === "frag",
+    );
+    if (frag) {
+      data.frag_x = frag.x;
+      data.frag_y = frag.y;
+    }
+  }
+  socket.emit("shoot", data);
 }
 
 function updateAllBullets(socket, deltaSeconds) {
-  // Update bullets, handle wall bounces, hits, and expirations.
+  // Update all bullets locally with sub-stepping for high speeds.
   const toRemove = [];
+  const localToRemove = [];
+  const MAX_STEP_DIST = 5;
 
   for (const [id, bullet] of Object.entries(STATE.bullets)) {
+    const isOwner = bullet.shooter === STATE.playerName;
     if (tickLifetime(bullet, deltaSeconds)) {
-      toRemove.push(id);
+      if (isOwner) toRemove.push(id);
+      else localToRemove.push(id);
       continue;
     }
 
-    const { nextX, nextY } = stepBullet(bullet, deltaSeconds);
-    const victim = findVictimAt(nextX, nextY);
+    const speed = Math.hypot(bullet.vx, bullet.vy);
+    const totalDist = speed * deltaSeconds;
+    const numSubSteps =
+      totalDist > 0 ? Math.ceil(totalDist / MAX_STEP_DIST) : 1;
+    const subDelta = deltaSeconds / numSubSteps;
+    let dead = false;
 
-    if (victim) {
-      toRemove.push(id);
-      emitBulletHit(socket, id, victim);
-      continue;
+    if (bullet.weapon_type === "laser" && !bullet.trail) {
+      bullet.trail = [{ x: bullet.x, y: bullet.y }];
     }
 
-    bullet.x = nextX;
-    bullet.y = nextY;
-    emitBulletState(socket, id, bullet);
+    for (let s = 0; s < numSubSteps; s++) {
+      const { nextX, nextY, hitWall } = stepBullet(bullet, subDelta);
+      if (hitWall) {
+        if (isOwner) toRemove.push(id);
+        else localToRemove.push(id);
+        dead = true;
+        break;
+      }
+      const victim = findVictimAt(nextX, nextY);
+      if (victim) {
+        if (isOwner) {
+          toRemove.push(id);
+          emitBulletHit(socket, id, victim);
+        } else localToRemove.push(id);
+        dead = true;
+        break;
+      }
+      bullet.x = nextX;
+      bullet.y = nextY;
+      if (bullet.weapon_type === "laser")
+        bullet.trail.push({ x: nextX, y: nextY });
+    }
+    if (dead) continue;
   }
 
   removeBullets(socket, toRemove);
+  for (const id of localToRemove) removeBulletLocal(id);
 }
 
 function renderAllBullets() {
-  // Render all bullets from state.
+  // Render all bullets from state, using triangles for fragments.
   for (const bullet of Object.values(STATE.bullets)) {
-    drawBullet(bullet.x, bullet.y);
+    if (bullet.weapon_type === "laser" && bullet.trail) {
+      drawLaserTrail(bullet.trail);
+    }
+
+    if (bullet.weapon_type === "fragment") {
+      drawFragment(bullet.x, bullet.y, bullet.vx, bullet.vy);
+    } else {
+      drawBullet(bullet.x, bullet.y, bullet.weapon_type);
+    }
   }
+}
+
+function drawFragment(x, y, vx, vy) {
+  // Draw a small triangular fragment pointing in velocity direction.
+  if (!ctx) return;
+  const angle = Math.atan2(vy, vx);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.fillStyle = "#FFD700";
+  ctx.beginPath();
+  ctx.moveTo(4, 0);
+  ctx.lineTo(-2, -2);
+  ctx.lineTo(-2, 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+  ctx.restore();
 }
 
 export function createBulletManager(socket) {

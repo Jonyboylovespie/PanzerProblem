@@ -20,7 +20,16 @@ LOBBY_MAZE_SIZE = (5, 5)
 MIN_PLAYERS_TO_START = 2
 BULLET_SPEED = 300
 BULLET_LIFETIME_SECONDS = 10.0
-TANK_BARREL_OFFSET = 20
+TANK_BARREL_OFFSET = 25
+
+WEAPONS = {
+    "default": {"speed": BULLET_SPEED, "lifetime": BULLET_LIFETIME_SECONDS},
+    "frag": {"speed": BULLET_SPEED / 2, "lifetime": BULLET_LIFETIME_SECONDS},
+    "laser": {"speed": BULLET_SPEED * 4, "lifetime": BULLET_LIFETIME_SECONDS / 2},
+}
+
+WEAPON_SPAWN_TIME_MIN = 5.0
+WEAPON_SPAWN_TIME_MAX = 10.0
 
 
 @dataclass(frozen=True)
@@ -29,9 +38,16 @@ class Tank:
     y: float
     angle: float
     color: str
+    weapon: str = "default"
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"x": self.x, "y": self.y, "angle": self.angle, "color": self.color}
+        return {
+            "x": self.x,
+            "y": self.y,
+            "angle": self.angle,
+            "color": self.color,
+            "weapon": self.weapon,
+        }
 
 
 def generate_game_code(length: int = 6) -> str:
@@ -95,6 +111,37 @@ def ensure_list(game: Dict[str, Any], key: str) -> List[Any]:
     return game[key]
 
 
+def spawn_random_pickup(game_code: str) -> None:
+    # Spawn a random weapon pickup at a random location.
+    game = games.get(game_code)
+    if not game or not game.get("started"):
+        return
+    maze = game.get("maze", [])
+    if not maze:
+        return
+    h, w = len(maze), len(maze[0])
+    pickups = ensure_list(game, "pickups")
+    available_weapons = [k for k in WEAPONS.keys() if k != "default"]
+    if not available_weapons:
+        return
+    pickups.append(
+        {
+            "id": f"p_{int(time.time() * 1000)}",
+            "x": random.randint(0, w - 1) * CELL_SIZE + CELL_SIZE / 2,
+            "y": random.randint(0, h - 1) * CELL_SIZE + CELL_SIZE / 2,
+            "type": random.choice(available_weapons),
+        }
+    )
+    socketio.emit("update_pickups", pickups, room=game_code)
+
+
+def weapon_spawner_loop(game_code: str) -> None:
+    # Periodically spawn weapons while the game is active.
+    while game_code in games and games[game_code].get("active"):
+        socketio.sleep(random.uniform(WEAPON_SPAWN_TIME_MIN, WEAPON_SPAWN_TIME_MAX))
+        spawn_random_pickup(game_code)
+
+
 def init_player_score(game: Dict[str, Any], player_name: str) -> None:
     # Initialize player score if missing.
     scores = ensure_dict(game, "scores")
@@ -103,10 +150,10 @@ def init_player_score(game: Dict[str, Any], player_name: str) -> None:
 
 def is_player_alive(game: Dict[str, Any], player_name: str) -> bool:
     # Return whether a player is alive based on tank state.
-    tank = ensure_dict(game, "tanks").get(player_name)
-    if not tank:
+    tanks = ensure_dict(game, "tanks")
+    if not player_name or player_name not in tanks:
         return False
-    return bool(tank.get("alive", True))
+    return bool(tanks[player_name].get("alive", True))
 
 
 def set_player_alive(game: Dict[str, Any], player_name: str, is_alive: bool) -> None:
@@ -168,7 +215,9 @@ def start_new_round(game: Dict[str, Any]) -> None:
         if tank:
             tank["angle"] = 0
             tank["alive"] = True
+            tank["weapon"] = "default"
     game["bullets"] = {}
+    game["pickups"] = []
 
 
 def set_player_tank(
@@ -181,10 +230,13 @@ def set_player_tank(
 ) -> None:
     # Set tank state for a player.
     tanks = ensure_dict(game, "tanks")
+    existing = tanks.get(player_name, {})
     if color is None:
-        existing = tanks.get(player_name, {})
         color = existing.get("color") or generate_random_color()
-    tanks[player_name] = Tank(x=x, y=y, angle=angle, color=color).to_dict()
+    weapon = existing.get("weapon") or "default"
+    tanks[player_name] = Tank(
+        x=x, y=y, angle=angle, color=color, weapon=weapon
+    ).to_dict()
 
 
 def respawn_player(game: Dict[str, Any], player_name: str) -> None:
@@ -220,6 +272,7 @@ def broadcast_game_state(game_code: str, game: Dict[str, Any]) -> None:
         room=game_code,
     )
     socketio.emit("update_tanks", game["tanks"], room=game_code)
+    socketio.emit("update_pickups", game.get("pickups", []), room=game_code)
 
 
 @app.route("/")
@@ -293,6 +346,8 @@ def generate_empty_maze(width: int, height: int) -> List[List[Dict[str, bool]]]:
 def create_game():
     # Create a new lobby game and redirect host into it.
     host_name = request.form.get("host_name")
+    if not host_name:
+        return redirect(url_for("home"))
     game_code = ensure_game_code_unique()
 
     width, height = LOBBY_MAZE_SIZE
@@ -328,8 +383,10 @@ def create_game():
 @app.route("/join", methods=["POST"])
 def join_game():
     # Join an existing active game as a new player.
-    game_code = request.form.get("game_code").upper()
+    game_code = (request.form.get("game_code") or "").upper()
     player_name = request.form.get("player_name")
+    if not game_code or not player_name:
+        return redirect(url_for("home"))
 
     game = require_game(game_code)
     if not game:
@@ -397,6 +454,7 @@ def on_start_game(data):
     start_new_round(game)
     game["started"] = True
 
+    socketio.start_background_task(weapon_spawner_loop, game_code)
     broadcast_game_state(game_code, game)
     socketio.emit("game_started", {"started": True}, room=game_code)
 
@@ -425,56 +483,92 @@ def on_tank_move(data):
     emit("update_tanks", tanks, room=game_code)
 
 
-@socketio.on("bullet_state")
-def on_bullet_state(data):
-    game_code = data.get("game_code")
-    bullet_id = data.get("bullet_id")
-    bullet = data.get("bullet")  # {x,y,vx,vy,shooter,lifetime}
-
-    if not (game_code and bullet_id and bullet):
-        return
-
-    if game_code in games and games[game_code].get("started"):
-        # Accept client authoritative bullet state
-        games[game_code]["bullets"][bullet_id] = bullet
-        # Broadcast to all clients
-        emit("update_bullets", games[game_code]["bullets"], room=game_code)
-
-
 @socketio.on("shoot")
 def on_shoot(data):
-    # Spawn a bullet for the player (one active bullet per shooter).
-    game_code = data.get("game_code")
-    player_name = data.get("player_name")
-
+    # Handle shooting and detonations.
+    game_code, player_name = data.get("game_code"), data.get("player_name")
     game = require_game(game_code)
-    if not game or not game.get("started"):
-        return
-    if not is_player_alive(game, player_name):
+    if not game or not game.get("started") or not is_player_alive(game, player_name):
         return
 
-    tanks = ensure_dict(game, "tanks")
-    if player_name not in tanks:
+    tanks, bullets = ensure_dict(game, "tanks"), ensure_dict(game, "bullets")
+    tank = tanks.get(player_name)
+    if not tank:
         return
 
-    bullets = ensure_dict(game, "bullets")
-    for bullet in bullets.values():
-        if bullet.get("shooter") == player_name:
+    weapon_type = tank.get("weapon", "default")
+
+    # Detonate existing frag if present
+    if weapon_type == "frag":
+        frag_id = next(
+            (
+                k
+                for k, v in bullets.items()
+                if v.get("shooter") == player_name and v.get("weapon_type") == "frag"
+            ),
+            None,
+        )
+        if frag_id:
+            b = bullets.pop(frag_id)
+            tank["weapon"] = "default"
+            fx, fy = data.get("frag_x", b["x"]), data.get("frag_y", b["y"])
+            for i in range(random.randint(15, 30)):
+                ang = random.uniform(0, 2 * math.pi)
+                bullets[f"{player_name}_f_{int(time.time() * 1000)}_{i}"] = {
+                    "x": fx,
+                    "y": fy,
+                    "vx": BULLET_SPEED * math.cos(ang),
+                    "vy": BULLET_SPEED * math.sin(ang),
+                    "shooter": player_name,
+                    "lifetime": 1.5,
+                    "weapon_type": "fragment",
+                }
+            emit("update_tanks", tanks, room=game_code)
+            emit("update_bullets", bullets, room=game_code)
             return
 
-    tank = tanks[player_name]
-    bullet_id = f"{player_name}_{len(bullets)}"
-    angle = tank["angle"]
+    # Standard shooting: one bullet per weapon type active
+    if any(
+        v.get("shooter") == player_name
+        and v.get("weapon_type", "default") == weapon_type
+        for v in bullets.values()
+    ):
+        return
 
-    bullets[bullet_id] = {
+    weapon, angle = WEAPONS.get(weapon_type, WEAPONS["default"]), tank["angle"]
+    bullets[f"{player_name}_{int(time.time() * 1000)}"] = {
         "x": tank["x"] + TANK_BARREL_OFFSET * math.cos(angle),
         "y": tank["y"] + TANK_BARREL_OFFSET * math.sin(angle),
-        "vx": BULLET_SPEED * math.cos(angle),
-        "vy": BULLET_SPEED * math.sin(angle),
+        "vx": weapon["speed"] * math.cos(angle),
+        "vy": weapon["speed"] * math.sin(angle),
         "shooter": player_name,
-        "lifetime": BULLET_LIFETIME_SECONDS,
+        "lifetime": weapon["lifetime"],
+        "weapon_type": weapon_type,
     }
+    if weapon_type != "frag":
+        tank["weapon"] = "default"
+        emit("update_tanks", tanks, room=game_code)
     emit("update_bullets", bullets, room=game_code)
+
+
+@socketio.on("claim_pickup")
+def on_claim_pickup(data):
+    # Remove a pickup and assign its weapon to the player.
+    game_code, player_name, pickup_id = (
+        data.get("game_code"),
+        data.get("player_name"),
+        data.get("pickup_id"),
+    )
+    game = require_game(game_code)
+    if not game:
+        return
+    tanks, pickups = ensure_dict(game, "tanks"), ensure_list(game, "pickups")
+    pickup = next((p for p in pickups if p["id"] == pickup_id), None)
+    if pickup and player_name in tanks:
+        tanks[player_name]["weapon"] = pickup["type"]
+        game["pickups"] = [p for p in pickups if p["id"] != pickup_id]
+        emit("update_tanks", tanks, room=game_code)
+        emit("update_pickups", game["pickups"], room=game_code)
 
 
 @socketio.on("bullet_hit_tank")
@@ -495,7 +589,12 @@ def on_bullet_hit_tank(data):
 
     bullets = ensure_dict(game, "bullets")
     if bullet_id in bullets:
-        del bullets[bullet_id]
+        bullet = bullets.pop(bullet_id)
+        if bullet.get("weapon_type") == "frag":
+            shooter = bullet.get("shooter")
+            tanks = ensure_dict(game, "tanks")
+            if shooter in tanks and tanks[shooter].get("weapon") == "frag":
+                tanks[shooter]["weapon"] = "default"
 
     set_player_alive(game, victim_name, False)
 
@@ -632,9 +731,17 @@ def on_bullet_remove(data):
     if not (game_code and bullet_id):
         return
     if game_code in games:
-        if bullet_id in games[game_code]["bullets"]:
-            del games[game_code]["bullets"][bullet_id]
-        emit("update_bullets", games[game_code]["bullets"], room=game_code)
+        game = games[game_code]
+        bullets = ensure_dict(game, "bullets")
+        if bullet_id in bullets:
+            bullet = bullets.pop(bullet_id)
+            if bullet.get("weapon_type") == "frag":
+                shooter = bullet.get("shooter")
+                tanks = ensure_dict(game, "tanks")
+                if shooter in tanks and tanks[shooter].get("weapon") == "frag":
+                    tanks[shooter]["weapon"] = "default"
+                    emit("update_tanks", tanks, room=game_code)
+        emit("update_bullets", bullets, room=game_code)
 
 
 if __name__ == "__main__":

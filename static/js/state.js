@@ -15,6 +15,7 @@
     wallsReady: false,
     wallSegments: [],
     wallRects: [],
+    pickups: [],
   };
 }
 

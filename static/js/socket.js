@@ -293,7 +293,22 @@ function bindCoreEvents(socket) {
   });
 
   socket.on("update_bullets", (bulletsData) => {
-    STATE.bullets = bulletsData || {};
+    // Merge server updates into local state to prevent snapping and preserve local simulation.
+    const incoming = bulletsData || {};
+    for (const id in incoming) {
+      if (!STATE.bullets[id]) {
+        STATE.bullets[id] = incoming[id];
+      }
+    }
+    for (const id in STATE.bullets) {
+      if (!incoming[id]) {
+        delete STATE.bullets[id];
+      }
+    }
+  });
+
+  socket.on("update_pickups", (pickups) => {
+    STATE.pickups = pickups || [];
   });
 
   socket.on("update_scores", (scores) => {
