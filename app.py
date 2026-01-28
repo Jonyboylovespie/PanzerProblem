@@ -468,8 +468,6 @@ def on_tank_move(data):
     game = require_game(game_code)
     if not game:
         return
-    if not game.get("started"):
-        return
     if not is_player_alive(game, player_name):
         return
 
