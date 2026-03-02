@@ -23,9 +23,14 @@ body {
     top: 0;
     left: 0;
     z-index: 1200;
-    padding: 12px;
+    padding: 15px;
     max-width: 420px;
     pointer-events: none;
+    background: rgba(255, 255, 255, 0.9);
+    border-bottom-right-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    font-family: Arial, sans-serif;
+    color: #333;
 }
 #hud button,
 #hud a,
@@ -34,6 +39,25 @@ body {
 #hud textarea {
     pointer-events: auto;
 }
+
+#hud button {
+    background-color: #3498db;
+    color: #fff;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s;
+    margin-right: 5px;
+    margin-bottom: 5px;
+    font-family: inherit;
+}
+
+#hud button:hover {
+    background-color: #2980b9;
+}
+
 #hud p,
 #hud h2,
 #hud ul,
@@ -41,46 +65,30 @@ body {
     margin: 0 0 8px 0;
 }
 
-#hud p:first-of-type {
-    margin-top: 44px;
-}
-
 #copy-code-button {
     margin-left: 8px;
-    padding: 4px 8px;
-    border: 1px solid rgba(255, 255, 255, 0.7);
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.35);
-    color: #fff;
-    font:
-        12px/1 Arial,
-        sans-serif;
-    cursor: pointer;
-}
-#copy-code-button:hover {
-    background: rgba(0, 0, 0, 0.55);
-}
-#copy-code-button:active {
-    transform: translateY(1px);
-}
-#copy-code-button:focus-visible {
-    outline: 2px solid rgba(255, 255, 255, 0.85);
-    outline-offset: 2px;
+    padding: 4px 8px !important;
+    font-size: 12px !important;
 }
 
 #fullscreen-button {
     position: fixed;
-    top: 8px;
-    left: 12px;
+    bottom: 12px;
+    right: 12px;
     z-index: 1300;
-    padding: 6px 10px;
-    border: 1px solid #000;
-    background: #fff;
-    color: #000;
-    font:
-        12px/1 Arial,
-        sans-serif;
+    padding: 8px 12px;
+    background-color: #3498db;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-family: Arial, sans-serif;
     cursor: pointer;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: background-color 0.3s;
+}
+
+#fullscreen-button:hover {
+    background-color: #2980b9;
 }
 
 #fullscreen-button:disabled {
