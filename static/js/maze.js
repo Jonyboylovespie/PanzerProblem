@@ -139,8 +139,8 @@ export function rebuildWalls() {
 
 export function getTankCorners(tank) {
   // Return the rotated rectangle corners for a tank.
-  const offsetsX = [-15, 15, 15, -15];
-  const offsetsY = [-10, -10, 10, 10];
+  const offsetsX = [-15, 15, 15, -15, 0, 20, 20, 0];
+  const offsetsY = [-10, -10, 10, 10, -3, -3, 3, 3];
 
   const cos = Math.cos(tank.angle);
   const sin = Math.sin(tank.angle);
