@@ -25,7 +25,7 @@ TANK_BARREL_OFFSET = 25
 WEAPONS = {
     "default": {"speed": BULLET_SPEED, "lifetime": BULLET_LIFETIME_SECONDS},
     "frag": {"speed": BULLET_SPEED / 2, "lifetime": BULLET_LIFETIME_SECONDS},
-    "laser": {"speed": BULLET_SPEED * 4, "lifetime": BULLET_LIFETIME_SECONDS / 2},
+    "laser": {"speed": BULLET_SPEED * 5, "lifetime": BULLET_LIFETIME_SECONDS / 5},
 }
 
 WEAPON_SPAWN_TIME_MIN = 5.0

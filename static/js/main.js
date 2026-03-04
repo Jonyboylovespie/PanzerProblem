@@ -75,7 +75,7 @@ function emitTankMove(tank) {
 function clearCanvas() {
   // Clear the frame.
   if (!ctx) return;
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.save(); ctx.resetTransform(); ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.restore();
 }
 
 function updateFpsCounter(fpsEl, fpsState, deltaSeconds) {

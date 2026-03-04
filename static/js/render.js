@@ -106,8 +106,8 @@ export function drawBullet(x, y, type = "default") {
 export function drawLaserTrail(trail) {
   // Draw a fading red trail for the laser.
   if (!ctx || !trail || trail.length < 2) return;
-  ctx.strokeStyle = "rgba(255, 0, 0, 0.3)";
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#F00";
+  ctx.lineWidth = BULLET.radius * 2;
   ctx.beginPath();
   ctx.moveTo(trail[0].x, trail[0].y);
   for (let i = 1; i < trail.length; i++) ctx.lineTo(trail[i].x, trail[i].y);
