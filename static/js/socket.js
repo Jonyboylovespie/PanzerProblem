@@ -219,7 +219,19 @@ function applyScores(scores) {
 function applyTanks(tanks) {
   // Replace tanks dict if server provides it.
   if (!tanks) return;
+  const myTank = STATE.tanks ? STATE.tanks[STATE.playerName] : null;
   STATE.tanks = tanks || {};
+  if (myTank && STATE.tanks[STATE.playerName]) {
+    if (myTank.alive && STATE.tanks[STATE.playerName].alive) {
+      const serverTank = STATE.tanks[STATE.playerName];
+      const dist = Math.hypot(serverTank.x - myTank.x, serverTank.y - myTank.y);
+      if (dist < 150) {
+        serverTank.x = myTank.x;
+        serverTank.y = myTank.y;
+        serverTank.angle = myTank.angle;
+      }
+    }
+  }
 }
 
 function updateStartButton() {
