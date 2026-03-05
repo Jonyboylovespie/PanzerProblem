@@ -284,6 +284,7 @@ def broadcast_game_state(game_code: str, game: Dict[str, Any]) -> None:
     )
     socketio.emit("update_tanks", game["tanks"], room=game_code)
     socketio.emit("update_pickups", game.get("pickups", []), room=game_code)
+    socketio.emit("update_bullets", game.get("bullets", {}), room=game_code)
 
 
 @app.route("/")
@@ -574,6 +575,8 @@ def on_claim_pickup(data):
     tanks, pickups = ensure_dict(game, "tanks"), ensure_list(game, "pickups")
     pickup = next((p for p in pickups if p["id"] == pickup_id), None)
     if pickup and player_name in tanks:
+        if tanks[player_name].get("weapon", "default") != "default":
+            return
         tanks[player_name]["weapon"] = pickup["type"]
         game["pickups"] = [p for p in pickups if p["id"] != pickup_id]
         emit("update_tanks", tanks, room=game_code)
@@ -604,6 +607,23 @@ def on_bullet_hit_tank(data):
             tanks = ensure_dict(game, "tanks")
             if shooter in tanks and tanks[shooter].get("weapon") == "frag":
                 tanks[shooter]["weapon"] = "default"
+            victim_tank = ensure_dict(game, "tanks").get(victim_name)
+            fx, fy = (
+                (victim_tank["x"], victim_tank["y"])
+                if victim_tank
+                else (bullet["x"], bullet["y"])
+            )
+            for i in range(random.randint(15, 30)):
+                ang = random.uniform(0, 2 * math.pi)
+                bullets[f"{shooter}_f_{int(time.time() * 1000)}_{i}"] = {
+                    "x": fx,
+                    "y": fy,
+                    "vx": BULLET_SPEED * math.cos(ang),
+                    "vy": BULLET_SPEED * math.sin(ang),
+                    "shooter": shooter,
+                    "lifetime": 1.5,
+                    "weapon_type": "fragment",
+                }
 
     set_player_alive(game, victim_name, False)
 
