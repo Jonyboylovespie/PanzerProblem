@@ -61,7 +61,7 @@ function isAlive(playerName) {
   return tank.alive;
 }
 
-function emitTankMove(tank, stopped = false) {
+function emitTankMove(tank) {
   // Emit the local player's tank state.
   socket.emit("tank_move", {
     game_code: STATE.gameCode,
@@ -69,7 +69,6 @@ function emitTankMove(tank, stopped = false) {
     x: tank.x,
     y: tank.y,
     angle: tank.angle,
-    stopped: stopped,
   });
 }
 
@@ -155,32 +154,6 @@ function handlePickups(me) {
   }
 }
 
-function interpolateTanks(deltaSeconds) {
-  // Smoothly interpolate opponent tanks towards their target positions.
-  const INTERP_SPEED = 10;
-  for (const [name, tank] of Object.entries(STATE.tanks)) {
-    if (name === STATE.playerName || !isAlive(name)) continue;
-    if (tank.stopped) {
-      if (typeof tank.targetX === "number") tank.x = tank.targetX;
-      if (typeof tank.targetY === "number") tank.y = tank.targetY;
-      if (typeof tank.targetAngle === "number") tank.angle = tank.targetAngle;
-      continue;
-    }
-    if (typeof tank.targetX === "number") {
-      tank.x += (tank.targetX - tank.x) * INTERP_SPEED * deltaSeconds;
-    }
-    if (typeof tank.targetY === "number") {
-      tank.y += (tank.targetY - tank.y) * INTERP_SPEED * deltaSeconds;
-    }
-    if (typeof tank.targetAngle === "number") {
-      let diff = tank.targetAngle - tank.angle;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      tank.angle += diff * INTERP_SPEED * deltaSeconds;
-    }
-  }
-}
-
 function renderTanks() {
   // Render every alive tank.
   for (const [name, tank] of Object.entries(STATE.tanks)) {
@@ -228,7 +201,6 @@ function startGame() {
   const fpsEl = document.getElementById("fps-counter");
   const fpsState = { value: 0 };
   let previousMs = Date.now();
-  let wasMoving = false;
 
   function loop() {
     const nowMs = Date.now();
@@ -243,20 +215,13 @@ function startGame() {
     const me = STATE.tanks[STATE.playerName];
     if (me && isAlive(STATE.playerName)) {
       const moved = applyMovement(me, deltaSeconds);
-      if (moved) {
-        emitTankMove(me, false);
-        wasMoving = true;
-      } else if (wasMoving) {
-        emitTankMove(me, true);
-        wasMoving = false;
-      }
+      if (moved) emitTankMove(me);
       handleShooting();
       handlePickups(me);
     }
 
     bulletManager.update(deltaSeconds);
     bulletManager.render();
-    interpolateTanks(deltaSeconds);
     renderTanks();
 
     requestAnimationFrame(loop);
