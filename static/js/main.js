@@ -61,7 +61,7 @@ function isAlive(playerName) {
   return tank.alive;
 }
 
-function emitTankMove(tank) {
+function emitTankMove(tank, stopped = false) {
   // Emit the local player's tank state.
   socket.emit("tank_move", {
     game_code: STATE.gameCode,
@@ -69,6 +69,7 @@ function emitTankMove(tank) {
     x: tank.x,
     y: tank.y,
     angle: tank.angle,
+    stopped: stopped,
   });
 }
 
@@ -159,6 +160,12 @@ function interpolateTanks(deltaSeconds) {
   const INTERP_SPEED = 10;
   for (const [name, tank] of Object.entries(STATE.tanks)) {
     if (name === STATE.playerName || !isAlive(name)) continue;
+    if (tank.stopped) {
+      if (typeof tank.targetX === "number") tank.x = tank.targetX;
+      if (typeof tank.targetY === "number") tank.y = tank.targetY;
+      if (typeof tank.targetAngle === "number") tank.angle = tank.targetAngle;
+      continue;
+    }
     if (typeof tank.targetX === "number") {
       tank.x += (tank.targetX - tank.x) * INTERP_SPEED * deltaSeconds;
     }
@@ -221,6 +228,7 @@ function startGame() {
   const fpsEl = document.getElementById("fps-counter");
   const fpsState = { value: 0 };
   let previousMs = Date.now();
+  let wasMoving = false;
 
   function loop() {
     const nowMs = Date.now();
@@ -235,7 +243,13 @@ function startGame() {
     const me = STATE.tanks[STATE.playerName];
     if (me && isAlive(STATE.playerName)) {
       const moved = applyMovement(me, deltaSeconds);
-      if (moved) emitTankMove(me);
+      if (moved) {
+        emitTankMove(me, false);
+        wasMoving = true;
+      } else if (wasMoving) {
+        emitTankMove(me, true);
+        wasMoving = false;
+      }
       handleShooting();
       handlePickups(me);
     }

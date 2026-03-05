@@ -240,7 +240,7 @@ function applyTanks(tanks) {
     const old = oldTanks[name];
     if (old && old.alive && t.alive) {
       const dist = Math.hypot(t.x - old.x, t.y - old.y);
-      if (dist < 150) {
+      if (dist < 150 && !t.stopped) {
         t.targetX = t.x;
         t.targetY = t.y;
         t.targetAngle = t.angle;
