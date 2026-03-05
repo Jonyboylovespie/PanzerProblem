@@ -32,6 +32,17 @@ WEAPON_SPAWN_TIME_MIN = 3.0
 WEAPON_SPAWN_TIME_MAX = 8.0
 
 
+def global_tick_loop():
+    # Broadcast game state at 60Hz tick rate
+    while True:
+        socketio.sleep(1.0 / 60.0)
+        for code, game in list(games.items()):
+            socketio.emit("update_tanks", game.get("tanks", {}), room=code)
+
+
+socketio.start_background_task(global_tick_loop)
+
+
 @dataclass(frozen=True)
 class Tank:
     x: float
@@ -478,7 +489,6 @@ def on_tank_move(data):
     tanks[player_name]["x"] = data.get("x")
     tanks[player_name]["y"] = data.get("y")
     tanks[player_name]["angle"] = data.get("angle")
-    emit("update_tanks", tanks, room=game_code)
 
 
 @socketio.on("shoot")
