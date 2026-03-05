@@ -219,7 +219,8 @@ function applyScores(scores) {
 function applyTanks(tanks) {
   // Replace tanks dict if server provides it.
   if (!tanks) return;
-  const myTank = STATE.tanks ? STATE.tanks[STATE.playerName] : null;
+  const oldTanks = STATE.tanks || {};
+  const myTank = oldTanks[STATE.playerName];
   STATE.tanks = tanks || {};
   if (myTank && STATE.tanks[STATE.playerName]) {
     if (myTank.alive && STATE.tanks[STATE.playerName].alive) {
@@ -229,6 +230,23 @@ function applyTanks(tanks) {
         serverTank.x = myTank.x;
         serverTank.y = myTank.y;
         serverTank.angle = myTank.angle;
+      }
+    }
+  }
+
+  for (const name in STATE.tanks) {
+    if (name === STATE.playerName) continue;
+    const t = STATE.tanks[name];
+    const old = oldTanks[name];
+    if (old && old.alive && t.alive) {
+      const dist = Math.hypot(t.x - old.x, t.y - old.y);
+      if (dist < 150 && !t.stopped) {
+        t.targetX = t.x;
+        t.targetY = t.y;
+        t.targetAngle = t.angle;
+        t.x = old.x;
+        t.y = old.y;
+        t.angle = old.angle;
       }
     }
   }

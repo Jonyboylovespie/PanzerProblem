@@ -489,6 +489,7 @@ def on_tank_move(data):
     tanks[player_name]["x"] = data.get("x")
     tanks[player_name]["y"] = data.get("y")
     tanks[player_name]["angle"] = data.get("angle")
+    tanks[player_name]["stopped"] = data.get("stopped", False)
 
 
 @socketio.on("shoot")
