@@ -28,8 +28,8 @@ WEAPONS = {
     "laser": {"speed": BULLET_SPEED * 5, "lifetime": BULLET_LIFETIME_SECONDS / 5},
 }
 
-WEAPON_SPAWN_TIME_MIN = 5.0
-WEAPON_SPAWN_TIME_MAX = 10.0
+WEAPON_SPAWN_TIME_MIN = 3.0
+WEAPON_SPAWN_TIME_MAX = 8.0
 
 
 @dataclass(frozen=True)
