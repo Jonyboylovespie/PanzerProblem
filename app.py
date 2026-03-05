@@ -33,9 +33,9 @@ WEAPON_SPAWN_TIME_MAX = 8.0
 
 
 def global_tick_loop():
-    # Broadcast game state at 120Hz tick rate
+    # Broadcast game state at 60Hz tick rate
     while True:
-        socketio.sleep(1.0 / 120.0)
+        socketio.sleep(1.0 / 60.0)
         for code, game in list(games.items()):
             socketio.emit("update_tanks", game.get("tanks", {}), room=code)
 
