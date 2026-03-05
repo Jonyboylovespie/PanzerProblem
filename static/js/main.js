@@ -61,14 +61,8 @@ function isAlive(playerName) {
   return tank.alive;
 }
 
-let lastEmitTime = 0;
-
 function emitTankMove(tank) {
-  // Emit the local player's tank state at most 30 times a second.
-  const now = Date.now();
-  if (now - lastEmitTime < 33) return;
-  lastEmitTime = now;
-
+  // Emit the local player's tank state.
   socket.emit("tank_move", {
     game_code: STATE.gameCode,
     player_name: STATE.playerName,
@@ -160,6 +154,26 @@ function handlePickups(me) {
   }
 }
 
+function interpolateTanks(deltaSeconds) {
+  // Smoothly interpolate opponent tanks towards their target positions.
+  const INTERP_SPEED = 10;
+  for (const [name, tank] of Object.entries(STATE.tanks)) {
+    if (name === STATE.playerName || !isAlive(name)) continue;
+    if (typeof tank.targetX === "number") {
+      tank.x += (tank.targetX - tank.x) * INTERP_SPEED * deltaSeconds;
+    }
+    if (typeof tank.targetY === "number") {
+      tank.y += (tank.targetY - tank.y) * INTERP_SPEED * deltaSeconds;
+    }
+    if (typeof tank.targetAngle === "number") {
+      let diff = tank.targetAngle - tank.angle;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      tank.angle += diff * INTERP_SPEED * deltaSeconds;
+    }
+  }
+}
+
 function renderTanks() {
   // Render every alive tank.
   for (const [name, tank] of Object.entries(STATE.tanks)) {
@@ -228,6 +242,7 @@ function startGame() {
 
     bulletManager.update(deltaSeconds);
     bulletManager.render();
+    interpolateTanks(deltaSeconds);
     renderTanks();
 
     requestAnimationFrame(loop);
