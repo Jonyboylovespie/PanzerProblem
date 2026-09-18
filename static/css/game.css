@@ -1,4 +1,4 @@
-﻿html,
+html,
 body {
     margin: 0;
     padding: 0;
@@ -13,24 +13,24 @@ body {
     place-items: center;
 }
 #game-canvas {
-    border: 1px solid #000;
-    background: #f0f0f0;
+    border: 1px solid var(--border);
+    background: var(--arena);
     display: block;
 }
 
 #hud {
     position: fixed;
-    top: 0;
+    top: 68px;
     left: 0;
     z-index: 1200;
     padding: 15px;
     max-width: 420px;
     pointer-events: none;
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--surface);
     border-bottom-right-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow);
     font-family: Arial, sans-serif;
-    color: #333;
+    color: var(--text);
 }
 #hud button,
 #hud a,
@@ -41,7 +41,7 @@ body {
 }
 
 #hud button {
-    background-color: #3498db;
+    background-color: var(--button);
     color: #fff;
     border: none;
     padding: 8px 12px;
@@ -55,7 +55,7 @@ body {
 }
 
 #hud button:hover {
-    background-color: #2980b9;
+    background-color: var(--button-hover);
 }
 
 #hud p,
@@ -77,7 +77,7 @@ body {
     right: 12px;
     z-index: 1300;
     padding: 8px 12px;
-    background-color: #3498db;
+    background-color: var(--button);
     color: #fff;
     border: none;
     border-radius: 4px;
@@ -88,7 +88,7 @@ body {
 }
 
 #fullscreen-button:hover {
-    background-color: #2980b9;
+    background-color: var(--button-hover);
 }
 
 #fullscreen-button:disabled {
@@ -102,7 +102,7 @@ body {
 }
 #fps-counter {
     position: fixed;
-    top: 8px;
+    top: 68px;
     right: 12px;
     background: rgba(0, 0, 0, 0.6);
     color: #0f0;
@@ -113,3 +113,5 @@ body {
     pointer-events: none;
     letter-spacing: 0.5px;
 }
+
+.game-visibility { color: var(--muted); font-size: 13px; }

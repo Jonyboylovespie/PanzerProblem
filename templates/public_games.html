@@ -1,0 +1,11 @@
+{% for game in public_games %}
+<li class="public-game">
+    <div>
+        <strong>{{ game.host }}'s game</strong>
+        <span class="game-details">{{ game.player_count }} player{{ 's' if game.player_count != 1 else '' }} · {{ 'In progress' if game.started else 'In lobby' }}</span>
+    </div>
+    <a class="button-link" href="{{ url_for('join_game', game_code=game.code) }}">Join<span class="sr-only"> {{ game.host }}'s game</span></a>
+</li>
+{% else %}
+<li class="empty-state">No public games yet. Create one and invite others to join!</li>
+{% endfor %}

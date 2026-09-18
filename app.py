@@ -327,7 +327,30 @@ def broadcast_game_state(game_code: str, game: Dict[str, Any]) -> None:
 
 @app.route("/")
 def home():
-    return render_template("home.html")
+    return render_template("home.html", public_games=get_public_games())
+
+
+def get_public_games() -> List[Dict[str, Any]]:
+    # Expose only the information needed to browse active public games.
+    return [
+        {
+            "code": code,
+            "host": game["host"],
+            "player_count": len(game["players"]),
+            "started": game.get("started", False),
+        }
+        for code, game in list(games.items())
+        if game.get("public") and game.get("active") and game.get("players")
+    ]
+
+
+@app.route("/public-games")
+def public_games():
+    response = app.make_response(
+        render_template("public_games.html", public_games=get_public_games())
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def generate_maze(width: int, height: int) -> List[List[Dict[str, Any]]]:
@@ -406,6 +429,7 @@ def create_game():
 
     games[game_code] = {
         "host": host_name,
+        "public": request.form.get("public") == "on",
         "players": [host_name],
         "active": True,
         "started": False,
@@ -430,10 +454,20 @@ def create_game():
     return redirect(url_for("game", code=game_code))
 
 
-@app.route("/join", methods=["POST"])
+@app.route("/join", methods=["GET", "POST"])
 def join_game():
     # Join an existing active game as a new player.
-    game_code = (request.form.get("game_code") or "").upper()
+    if request.method == "GET":
+        game_code = (request.args.get("game_code") or "").strip().upper()
+        if not game_code:
+            return redirect(url_for("home", _anchor="join"))
+        game = require_game(game_code)
+        if not game or not game.get("active"):
+            flash("This game is no longer available. Choose another game below.")
+            return redirect(url_for("home", _anchor="join"))
+        return render_template("join.html", game_code=game_code, host=game["host"])
+
+    game_code = (request.form.get("game_code") or "").strip().upper()
     player_name = request.form.get("player_name")
     if not game_code or not player_name:
         return redirect(url_for("home"))

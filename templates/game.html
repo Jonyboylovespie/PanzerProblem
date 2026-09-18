@@ -1,8 +1,6 @@
-﻿<!doctype html>
-<html>
-    <head>
-        <title>Game Room</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+{% extends "base.html" %}
+{% block title %}Game Room{% endblock %}
+{% block head %}
         <link
             rel="stylesheet"
             href="{{ url_for('static', filename='css/game.css') }}"
@@ -19,14 +17,14 @@
             type="module"
             src="{{ url_for('static', filename='js/main.js') }}"
         ></script>
-    </head>
-    <body>
+{% endblock %}
+{% block body %}
         <div
             id="game-config"
             data-host="{{ game_data.host }}"
             data-started="{{ 'true' if game_data.started else 'false' }}"
-            data-players="{{ game_data.players | tojson }}"
-            data-scores="{{ (game_data.scores | default({})) | tojson }}"
+            data-players='{{ game_data.players | tojson }}'
+            data-scores='{{ (game_data.scores | default({})) | tojson }}'
         ></div>
         <div id="hud">
             <p>
@@ -34,6 +32,7 @@
                 <strong id="game-code">{{ game_code }}</strong>
                 <button id="copy-code-button" type="button">Copy</button>
             </p>
+            <p class="game-visibility">{{ "Public game · Listed for everyone" if game_data.public else "Private game · Share your code to invite" }}</p>
             <div id="fps-counter">FPS: --</div>
             {% if player_name == game_data.host %}
             <button id="start-button">Start Game</button>
@@ -57,5 +56,4 @@
         <div id="game-container">
             <canvas id="game-canvas"></canvas>
         </div>
-    </body>
-</html>
+{% endblock %}

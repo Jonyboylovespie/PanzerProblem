@@ -1,36 +1,21 @@
-﻿<!doctype html>
-<html>
-    <head>
-        <title>Join Game</title>
-        <link
-            rel="stylesheet"
-            href="{{ url_for('static', filename='css/styles.css') }}"
-        />
-    </head>
-    <body>
-        <h1>Join Game</h1>
-
-        {% with messages = get_flashed_messages() %} {% if messages %}
-        <div class="alert">{{ messages[0] }}</div>
-        {% endif %} {% endwith %}
-
-        <div>
-            <h2>Join Game: {{ game_code }}</h2>
-            <form action="/join" method="post">
-                <input type="hidden" name="game_code" value="{{ game_code }}" />
-                <input
-                    type="text"
-                    name="player_name"
-                    placeholder="Your Name"
-                    required
-                    autofocus
-                />
-                <button type="submit">Join Game</button>
-            </form>
-        </div>
-
-        <div>
-            <a href="/">Back to Home</a>
-        </div>
-    </body>
-</html>
+{% extends "base.html" %}
+{% block title %}Join Game{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+{% endblock %}
+{% block body %}
+<main class="join-page">
+    <h1>Join Game</h1>
+    <section class="panel">
+        <h2>{{ host }}'s game</h2>
+        <p class="help-text">Game code: {{ game_code }}</p>
+        <form action="{{ url_for('join_game') }}" method="post">
+            <input type="hidden" name="game_code" value="{{ game_code }}" />
+            <label for="player-name">Your name</label>
+            <input id="player-name" type="text" name="player_name" placeholder="Your Name" required autofocus />
+            <button type="submit">Join Game</button>
+        </form>
+        <a class="back-link" href="{{ url_for('home', _anchor='join') }}">Back to games</a>
+    </section>
+</main>
+{% endblock %}

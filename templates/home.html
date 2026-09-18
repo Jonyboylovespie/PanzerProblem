@@ -1,37 +1,46 @@
-﻿<!DOCTYPE html>
-<html>
-<head>
-    <title>Game Server</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
-</head>
-<body>
-<h1>Game Server</h1>
-
-{% with messages = get_flashed_messages() %}
-    {% if messages %}
-        <div class="alert">
-            {{ messages[0] }}
-        </div>
-    {% endif %}
-{% endwith %}
-
-<div>
-    <h2>Create a New Game</h2>
-    <form action="/create" method="post">
-        <input type="text" name="host_name" placeholder="Your Name" required>
-        <button type="submit">Create Game</button>
-    </form>
-</div>
-
-<div>
-    <div>
-        <h2>Join a Game</h2>
-        <form action="/join" method="post">
-            <input type="text" name="game_code" placeholder="Game Code" value="{{ request.args.get("game_code", "") }}" required>
-            <input type="text" name="player_name" placeholder="Your Name" required>
-            <button type="submit">Join Game</button>
-        </form>
+{% extends "base.html" %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+<script type="module" src="{{ url_for('static', filename='js/lobby.js') }}"></script>
+{% endblock %}
+{% block body %}
+<main>
+    <h1>Game Server</h1>
+    {% with messages = get_flashed_messages() %}
+        {% for message in messages %}<div class="alert" role="alert">{{ message }}</div>{% endfor %}
+    {% endwith %}
+    <div class="lobby-grid">
+        <section class="panel" aria-labelledby="create-title">
+            <h2 id="create-title">Create a New Game</h2>
+            <form action="{{ url_for('create_game') }}" method="post">
+                <label for="host-name">Your name</label>
+                <input id="host-name" type="text" name="host_name" placeholder="Your Name" required />
+                <label class="checkbox-label" for="public-game">
+                    <input id="public-game" type="checkbox" name="public" aria-describedby="visibility-help" />
+                    Make this game public
+                </label>
+                <p id="visibility-help" class="help-text">Public games appear in the join list for everyone. Leave unchecked to share only by game code.</p>
+                <button type="submit">Create Game</button>
+            </form>
+        </section>
+        <section id="join" class="panel" aria-labelledby="join-title">
+            <h2 id="join-title">Join a Game</h2>
+            <form action="{{ url_for('join_game') }}" method="post">
+                <label for="game-code">Game code</label>
+                <input id="game-code" type="text" name="game_code" placeholder="Game Code" value="{{ request.args.get('game_code', '') }}" required />
+                <label for="player-name">Your name</label>
+                <input id="player-name" type="text" name="player_name" placeholder="Your Name" required />
+                <button type="submit">Join by Code</button>
+            </form>
+            <div class="list-heading">
+                <h3>Public Games</h3>
+                <button id="refresh-games" class="secondary-button" type="button">Refresh</button>
+            </div>
+            <p id="games-status" class="help-text" role="status">Updates automatically every 10 seconds.</p>
+            <ul id="public-games" data-url="{{ url_for('public_games') }}" aria-label="Public games">
+                {% include "public_games.html" %}
+            </ul>
+        </section>
     </div>
-</div>
-</body>
-</html>
+</main>
+{% endblock %}

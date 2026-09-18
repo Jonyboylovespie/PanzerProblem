@@ -1,85 +1,37 @@
-body {
-    font-family: Arial, sans-serif;
-    background-color: #f4f4f9;
-    color: #333;
-    line-height: 1.6;
-    margin: 0;
-    padding: 20px;
-}
-
-h1, h2 {
-    color: #2c3e50;
-}
-
-h1 {
-    text-align: center;
-    margin-bottom: 20px;
-}
-
-h2 {
-    border-bottom: 2px solid #3498db;
-    padding-bottom: 5px;
-    margin-top: 30px;
-    max-width: 400px;
-    margin-left: auto;
-    margin-right: auto;
-}
-
-form {
-    background: #fff;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    max-width: 400px;
-    margin: 0 auto 20px;
-}
-
-input[type="text"] {
-    width: 100%;
-    padding: 10px;
-    margin-bottom: 15px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    box-sizing: border-box;
-    display: block;
-}
-
-button {
-    background-color: #3498db;
-    color: #fff;
-    border: none;
-    padding: 10px 15px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 16px;
-    width: 100%;
-    transition: background-color 0.3s;
-}
-
-button:hover {
-    background-color: #2980b9;
-}
-
-.alert {
-    background-color: #e74c3c;
-    color: #fff;
-    padding: 10px;
-    border-radius: 4px;
-    margin-bottom: 20px;
-    text-align: center;
-    max-width: 400px;
-    margin-left: auto;
-    margin-right: auto;
-}
-
-a {
-    color: #3498db;
-    text-decoration: none;
-    display: block;
-    text-align: center;
-    margin-top: 20px;
-}
-
-a:hover {
-    text-decoration: underline;
+* { box-sizing: border-box; }
+body { line-height: 1.6; margin: 0; padding: 72px 20px 32px; }
+main { max-width: 1000px; margin: 0 auto; }
+h1 { text-align: center; margin: 0 0 28px; }
+h2 { margin: 0 0 22px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); font-size: 22px; }
+h3 { margin: 0; font-size: 18px; }
+.lobby-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.panel { min-width: 0; padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+form { margin: 0; }
+label { display: block; margin-bottom: 6px; font-weight: 600; }
+input[type="text"] { display: block; width: 100%; padding: 12px; margin-bottom: 18px; border: 1px solid var(--border); border-radius: 6px; background: var(--input); color: var(--text); font: inherit; }
+input::placeholder { color: var(--muted); }
+.checkbox-label { display: flex; align-items: center; gap: 10px; margin-top: 4px; cursor: pointer; }
+input[type="checkbox"] { width: 20px; height: 20px; margin: 0; accent-color: var(--button); flex-shrink: 0; }
+.help-text { color: var(--muted); font-size: 14px; margin: 6px 0 18px; }
+button, .button-link { display: inline-block; padding: 11px 16px; border: none; border-radius: 6px; background: var(--button); color: #fff; cursor: pointer; font: inherit; text-align: center; text-decoration: none; }
+form button { width: 100%; }
+button:hover, .button-link:hover { background: var(--button-hover); }
+button:disabled { opacity: 0.6; cursor: wait; }
+a { color: var(--accent); }
+.list-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 28px; }
+.secondary-button { padding: 8px 12px; background: transparent; color: var(--accent); border: 1px solid var(--border); font-size: 14px; }
+.secondary-button:hover { background: var(--input); }
+#public-games { list-style: none; padding: 0; margin: 0; }
+.public-game { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 0; border-top: 1px solid var(--border); }
+.public-game > div { min-width: 0; overflow-wrap: anywhere; }
+.game-details { display: block; color: var(--muted); font-size: 14px; }
+.public-game .button-link { flex-shrink: 0; }
+.empty-state { padding: 18px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); }
+.alert { background: #b91c1c; color: #fff; padding: 12px; border-radius: 6px; margin-bottom: 24px; text-align: center; }
+.join-page { max-width: 480px; }
+.back-link { display: block; margin-top: 20px; text-align: center; }
+@media (max-width: 700px) {
+    .lobby-grid { grid-template-columns: 1fr; }
+    .panel { padding: 20px; }
+    body { padding-left: 16px; padding-right: 16px; }
 }

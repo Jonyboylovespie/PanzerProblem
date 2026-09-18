@@ -1,19 +1,26 @@
-﻿import { STATE } from "./state.js";
+import { STATE } from "./state.js";
 
 export let canvas = null;
 export let ctx = null;
 
-const WALL_COLOR = "#000";
+let arenaInk = "#d4deec";
+
+function updateRenderTheme() {
+  arenaInk = getComputedStyle(document.documentElement).getPropertyValue("--arena-ink").trim();
+}
+
+window.addEventListener("themechange", updateRenderTheme);
 const WALL_THICKNESS = 5;
 
 const TANK_BODY = { w: 30, h: 20, x: -15, y: -10 };
 const TANK_BARREL = { w: 20, h: 6, x: 0, y: -3 };
-const LABEL = { color: "#000", font: "12px Arial", x: -10, y: -15 };
+const LABEL = { font: "12px Arial", x: -10, y: -15 };
 
-const BULLET = { radius: 4, color: "#000" };
+const BULLET = { radius: 4 };
 const PICKUP = { radius: 10, color: "#FFD700" };
 
 export function initRender() {
+  updateRenderTheme();
   canvas = document.getElementById("game-canvas");
   ctx = canvas ? canvas.getContext("2d") : null;
 }
@@ -30,7 +37,7 @@ function withContext(transformFn, drawFn) {
 function configureWallsStyle() {
   // Apply consistent wall stroke configuration.
   if (!ctx) return;
-  ctx.strokeStyle = WALL_COLOR;
+  ctx.strokeStyle = arenaInk;
   ctx.lineWidth = WALL_THICKNESS;
 }
 
@@ -75,7 +82,7 @@ export function drawTank(x, y, angle, color, name, weapon = "default") {
 function drawTankLabel(x, y, name, weapon = "default") {
   // Draw player label and weapon status above the tank.
   if (!ctx) return;
-  ctx.fillStyle = LABEL.color;
+  ctx.fillStyle = arenaInk;
   ctx.font = LABEL.font;
   const label = weapon === "default" ? name : `${name} [${weapon}]`;
   ctx.fillText(label, x + LABEL.x, y + LABEL.y);
@@ -86,7 +93,7 @@ export function drawBullet(x, y, type = "default") {
   if (!ctx) return;
   const isSpecial = type !== "default";
   ctx.fillStyle =
-    type === "laser" ? "#F00" : isSpecial ? "#FFD700" : BULLET.color;
+    type === "laser" ? "#F00" : isSpecial ? "#FFD700" : arenaInk;
   ctx.beginPath();
   const radius =
     type === "frag"

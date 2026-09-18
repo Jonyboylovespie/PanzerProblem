@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>{% block title %}Game Server{% endblock %}</title>
+        <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}" />
+        {% block head %}{% endblock %}
+    </head>
+    <body>
+        <button id="theme-toggle" type="button" role="switch" aria-checked="true" aria-label="Dark mode">
+            <span aria-hidden="true">Dark mode: on</span>
+        </button>
+        {% block body %}{% endblock %}
+    </body>
+</html>
