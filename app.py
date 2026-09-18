@@ -1,15 +1,53 @@
 import math
+import os
 import random
 import string
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from dotenv import load_dotenv
 from flask import Flask, flash, redirect, render_template, request, session, url_for
 from flask_socketio import SocketIO, emit, join_room
 
+
+load_dotenv()
+
+
+def get_env_bool(name: str, default: bool = False) -> bool:
+    # Parse common boolean values from environment variables.
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_env_int(name: str, default: int) -> int:
+    # Parse an integer environment variable and fail clearly when invalid.
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY must be set in the environment")
+
+APP_HOST = os.getenv("HOST", "0.0.0.0")
+APP_PORT = get_env_int("PORT", 8000)
+APP_DEBUG = get_env_bool("DEBUG", False)
+
 app = Flask(__name__)
-app.secret_key = "super_secret_key"
+app.config.update(
+    SECRET_KEY=SECRET_KEY,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE=os.getenv("SESSION_COOKIE_SAMESITE", "Lax"),
+    SESSION_COOKIE_SECURE=get_env_bool("SESSION_COOKIE_SECURE", False),
+)
 socketio = SocketIO(app)
 
 # In-memory storage for active games
@@ -774,4 +812,4 @@ def on_bullet_remove(data):
 
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=80, debug=False)
+    socketio.run(app, host=APP_HOST, port=APP_PORT, debug=APP_DEBUG)
