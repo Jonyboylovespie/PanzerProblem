@@ -1,8 +1,11 @@
-﻿import { STATE } from "./state.js";
+import { STATE } from "./state.js";
 import { rebuildWalls } from "./maze.js";
 import { canvas } from "./render.js";
+import { mergeTankSnapshot } from "./tank-sync.js";
 
 const MIN_PLAYERS_TO_START = 2;
+let resetTankPositions = false;
+let previousPlayersMarkup = null;
 
 function clampPositiveInt(value, fallback) {
   // Clamp to a positive integer fallback.
@@ -217,39 +220,11 @@ function applyScores(scores) {
 }
 
 function applyTanks(tanks) {
-  // Replace tanks dict if server provides it.
   if (!tanks) return;
-  const oldTanks = STATE.tanks || {};
-  const myTank = oldTanks[STATE.playerName];
-  STATE.tanks = tanks || {};
-  if (myTank && STATE.tanks[STATE.playerName]) {
-    if (myTank.alive && STATE.tanks[STATE.playerName].alive) {
-      const serverTank = STATE.tanks[STATE.playerName];
-      const dist = Math.hypot(serverTank.x - myTank.x, serverTank.y - myTank.y);
-      if (dist < 150) {
-        serverTank.x = myTank.x;
-        serverTank.y = myTank.y;
-        serverTank.angle = myTank.angle;
-      }
-    }
-  }
-
-  for (const name in STATE.tanks) {
-    if (name === STATE.playerName) continue;
-    const t = STATE.tanks[name];
-    const old = oldTanks[name];
-    if (old && old.alive && t.alive) {
-      const dist = Math.hypot(t.x - old.x, t.y - old.y);
-      if (dist < 150 && !t.stopped) {
-        t.targetX = t.x;
-        t.targetY = t.y;
-        t.targetAngle = t.angle;
-        t.x = old.x;
-        t.y = old.y;
-        t.angle = old.angle;
-      }
-    }
-  }
+  STATE.tanks = mergeTankSnapshot(
+    STATE.tanks || {}, tanks, STATE.playerName, resetTankPositions,
+  );
+  resetTankPositions = false;
 }
 
 function updateStartButton() {
@@ -270,9 +245,7 @@ export function updatePlayersList() {
   const listEl = document.getElementById("players-list");
   if (!listEl) return;
 
-  listEl.innerHTML = "";
-  for (const name of getPlayerNames()) {
-    const li = document.createElement("li");
+  const labels = getPlayerNames().map((name) => {
     const score =
       STATE.scores && typeof STATE.scores[name] !== "undefined"
         ? STATE.scores[name]
@@ -280,9 +253,16 @@ export function updatePlayersList() {
 
     const hostSuffix = name === STATE.hostName ? " (Host)" : "";
     const aliveSuffix = isAlivePlayer(name) ? "" : " (Dead)";
-    li.textContent = `${name}${hostSuffix}${aliveSuffix} - Score: ${score}`;
-    listEl.appendChild(li);
-  }
+    return `${name}${hostSuffix}${aliveSuffix} - Score: ${score}`;
+  });
+  const markupKey = JSON.stringify(labels);
+  if (markupKey === previousPlayersMarkup) return;
+  previousPlayersMarkup = markupKey;
+  listEl.replaceChildren(...labels.map((label) => {
+    const li = document.createElement("li");
+    li.textContent = label;
+    return li;
+  }));
 }
 
 function applyGameData(gameData) {
@@ -304,6 +284,8 @@ function applyMazeData(data) {
   // Apply maze payload and rebuild collision geometry.
   if (!data) return;
 
+  // The next snapshot contains fresh spawns, even if close to the old positions.
+  resetTankPositions = true;
   STATE.maze = data.maze;
   STATE.cellSize = data.cell_size;
 

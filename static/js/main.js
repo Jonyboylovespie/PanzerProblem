@@ -1,9 +1,10 @@
-﻿import { STATE, initStateFromDOM } from "./state.js";
+import { STATE, initStateFromDOM } from "./state.js";
 import { initInput, keys } from "./input.js";
 import { attemptMoveAndResolve, attemptRotate } from "./movement.js";
 import { createBulletManager } from "./bullets.js";
 import { drawMaze, drawPickups, drawTank, initRender, ctx } from "./render.js";
 import { initSocket, updatePlayersList } from "./socket.js";
+import { createTankMoveSender, interpolateRemoteTanks } from "./tank-sync.js";
 
 const MOVE_SPEED_PIXELS_PER_SEC = 150;
 const ROT_SPEED_RAD_PER_SEC = 4;
@@ -59,18 +60,6 @@ function isAlive(playerName) {
   if (!tank) return false;
   if (typeof tank.alive !== "boolean") return true;
   return tank.alive;
-}
-
-function emitTankMove(tank, stopped = false) {
-  // Emit the local player's tank state.
-  socket.emit("tank_move", {
-    game_code: STATE.gameCode,
-    player_name: STATE.playerName,
-    x: tank.x,
-    y: tank.y,
-    angle: tank.angle,
-    stopped: stopped,
-  });
 }
 
 function clearCanvas() {
@@ -155,32 +144,6 @@ function handlePickups(me) {
   }
 }
 
-function interpolateTanks(deltaSeconds) {
-  // Smoothly interpolate opponent tanks towards their target positions.
-  const INTERP_SPEED = 10;
-  for (const [name, tank] of Object.entries(STATE.tanks)) {
-    if (name === STATE.playerName || !isAlive(name)) continue;
-    if (tank.stopped) {
-      if (typeof tank.targetX === "number") tank.x = tank.targetX;
-      if (typeof tank.targetY === "number") tank.y = tank.targetY;
-      if (typeof tank.targetAngle === "number") tank.angle = tank.targetAngle;
-      continue;
-    }
-    if (typeof tank.targetX === "number") {
-      tank.x += (tank.targetX - tank.x) * INTERP_SPEED * deltaSeconds;
-    }
-    if (typeof tank.targetY === "number") {
-      tank.y += (tank.targetY - tank.y) * INTERP_SPEED * deltaSeconds;
-    }
-    if (typeof tank.targetAngle === "number") {
-      let diff = tank.targetAngle - tank.angle;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      tank.angle += diff * INTERP_SPEED * deltaSeconds;
-    }
-  }
-}
-
 function renderTanks() {
   // Render every alive tank.
   for (const [name, tank] of Object.entries(STATE.tanks)) {
@@ -227,15 +190,20 @@ function startGame() {
 
   const fpsEl = document.getElementById("fps-counter");
   const fpsState = { value: 0 };
-  let previousMs = Date.now();
-  let wasMoving = false;
+  let previousMs = performance.now();
+  const sendTankMove = createTankMoveSender(socket, {
+    game_code: STATE.gameCode,
+    player_name: STATE.playerName,
+  });
 
   function loop() {
-    const nowMs = Date.now();
-    const deltaSeconds = (nowMs - previousMs) / 1000.0;
+    const nowMs = performance.now();
+    const frameSeconds = (nowMs - previousMs) / 1000;
+    // Resuming a background tab must not simulate seconds of movement at once.
+    const deltaSeconds = Math.min(frameSeconds, 0.05);
     previousMs = nowMs;
 
-    updateFpsCounter(fpsEl, fpsState, deltaSeconds);
+    updateFpsCounter(fpsEl, fpsState, frameSeconds);
     clearCanvas();
     drawMaze();
     drawPickups();
@@ -243,20 +211,14 @@ function startGame() {
     const me = STATE.tanks[STATE.playerName];
     if (me && isAlive(STATE.playerName)) {
       const moved = applyMovement(me, deltaSeconds);
-      if (moved) {
-        emitTankMove(me, false);
-        wasMoving = true;
-      } else if (wasMoving) {
-        emitTankMove(me, true);
-        wasMoving = false;
-      }
+      sendTankMove(me, moved, nowMs);
       handleShooting();
       handlePickups(me);
     }
 
     bulletManager.update(deltaSeconds);
     bulletManager.render();
-    interpolateTanks(deltaSeconds);
+    interpolateRemoteTanks(STATE.tanks, STATE.playerName, deltaSeconds);
     renderTanks();
 
     requestAnimationFrame(loop);

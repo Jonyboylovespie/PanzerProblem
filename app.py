@@ -71,11 +71,20 @@ WEAPON_SPAWN_TIME_MAX = 8.0
 
 
 def global_tick_loop():
-    # Broadcast game state at 60Hz tick rate
+    # Send changed snapshots at 30Hz, independent of client display refresh rates.
+    previous_snapshots = {}
     while True:
-        socketio.sleep(1.0 / 60.0)
+        socketio.sleep(1.0 / 30.0)
         for code, game in list(games.items()):
-            socketio.emit("update_tanks", game.get("tanks", {}), room=code)
+            if not game.get("active"):
+                previous_snapshots.pop(code, None)
+                continue
+            tanks = {name: tank.copy() for name, tank in list(game.get("tanks", {}).items())}
+            if tanks != previous_snapshots.get(code):
+                socketio.emit("update_tanks", tanks, room=code)
+                previous_snapshots[code] = tanks
+        for code in previous_snapshots.keys() - games.keys():
+            previous_snapshots.pop(code, None)
 
 
 socketio.start_background_task(global_tick_loop)
@@ -742,7 +751,7 @@ def check_win_survival(game_code: str, winner: str, round_id: int) -> None:
             socketio.emit("update_scores", ensure_dict(game, "scores"), room=game_code)
             return
 
-        time.sleep(0.1)
+        socketio.sleep(0.1)
 
     game = require_game(game_code)
     if not game or not game.get("started"):
