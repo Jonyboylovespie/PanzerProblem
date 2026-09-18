@@ -59,6 +59,8 @@ MIN_PLAYERS_TO_START = 2
 BULLET_SPEED = 300
 BULLET_LIFETIME_SECONDS = 10.0
 TANK_BARREL_OFFSET = 25
+WALL_THICKNESS = 5
+WALL_LENGTH_MULTIPLIER = 1.04
 
 WEAPONS = {
     "default": {"speed": BULLET_SPEED, "lifetime": BULLET_LIFETIME_SECONDS},
@@ -574,6 +576,48 @@ def on_tank_move(data):
     tanks[player_name]["stopped"] = data.get("stopped", False)
 
 
+def bullet_spawn_position(game, tank):
+    # Sweep from the tank to the muzzle: the nominal spawn can be inside or
+    # beyond a thin wall even when the tank's shorter rendered barrel is clear.
+    dx = TANK_BARREL_OFFSET * math.cos(tank["angle"])
+    dy = TANK_BARREL_OFFSET * math.sin(tank["angle"])
+    # Match the client physics, which tests projectile centers against walls.
+    half_wall = WALL_THICKNESS / 2
+    size = game["cell_size"]
+    extension = size * (WALL_LENGTH_MULTIPLIER - 1) / 2
+    fraction = 1.0
+
+    for row_index, row in enumerate(game["maze"]):
+        for col_index, cell in enumerate(row):
+            x, y = col_index * size, row_index * size
+            walls = {
+                "top": (x - extension, y - half_wall, x + size + extension, y + half_wall),
+                "bottom": (x - extension, y + size - half_wall, x + size + extension, y + size + half_wall),
+                "left": (x - half_wall, y - extension, x + half_wall, y + size + extension),
+                "right": (x + size - half_wall, y - extension, x + size + half_wall, y + size + extension),
+            }
+            for side, (left, top, right, bottom) in walls.items():
+                if not cell.get(side):
+                    continue
+                enter, leave = 0.0, 1.0
+                for origin, delta, low, high in (
+                    (tank["x"], dx, left, right),
+                    (tank["y"], dy, top, bottom),
+                ):
+                    if abs(delta) < 1e-9:
+                        if not low <= origin <= high:
+                            enter, leave = 1.0, 0.0
+                            break
+                    else:
+                        near, far = sorted(((low - origin) / delta, (high - origin) / delta))
+                        enter, leave = max(enter, near), min(leave, far)
+                if enter <= leave:
+                    # Keep the projectile just outside the collision boundary.
+                    fraction = min(fraction, max(0.0, enter - 0.01 / TANK_BARREL_OFFSET))
+
+    return tank["x"] + dx * fraction, tank["y"] + dy * fraction
+
+
 @socketio.on("shoot")
 def on_shoot(data):
     # Handle shooting and detonations.
@@ -627,9 +671,10 @@ def on_shoot(data):
         return
 
     weapon, angle = WEAPONS.get(weapon_type, WEAPONS["default"]), tank["angle"]
+    spawn_x, spawn_y = bullet_spawn_position(game, tank)
     bullets[f"{player_name}_{int(time.time() * 1000)}"] = {
-        "x": tank["x"] + TANK_BARREL_OFFSET * math.cos(angle),
-        "y": tank["y"] + TANK_BARREL_OFFSET * math.sin(angle),
+        "x": spawn_x,
+        "y": spawn_y,
         "vx": weapon["speed"] * math.cos(angle),
         "vy": weapon["speed"] * math.sin(angle),
         "shooter": player_name,

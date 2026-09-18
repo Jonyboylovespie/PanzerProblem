@@ -1,9 +1,9 @@
-﻿import { STATE } from "./state.js";
-import { pointInCircle, pointInRect } from "./helpers.js";
+import { STATE } from "./state.js";
+import { pointInCircle } from "./helpers.js";
+import { stepBullet } from "./bullet-physics.js";
 import { drawBullet, drawLaserTrail, ctx } from "./render.js";
 
 const HIT_RADIUS = 15;
-const SPEED_EPSILON = 1e-6;
 
 function isTankAlive(tank) {
   // Treat missing flag as alive for backward compatibility.
@@ -44,34 +44,6 @@ function emitBulletHit(socket, bulletId, victimName) {
   });
 }
 
-function willHitWallAtX(nextX, currentY) {
-  // Check collision against wall rects at proposed X.
-  for (const rect of STATE.wallRects) {
-    if (pointInRect(nextX, currentY, rect)) return true;
-  }
-  return false;
-}
-
-function willHitWallAtY(currentX, nextY) {
-  // Check collision against wall rects at proposed Y.
-  for (const rect of STATE.wallRects) {
-    if (pointInRect(currentX, nextY, rect)) return true;
-  }
-  return false;
-}
-
-function normalizeVelocityToSpeed(bullet, targetSpeed) {
-  // Keep bullet speed constant after bounces.
-  const currentSpeed = Math.hypot(bullet.vx, bullet.vy);
-  if (!currentSpeed) return;
-
-  if (Math.abs(currentSpeed - targetSpeed) <= SPEED_EPSILON) return;
-
-  const scale = targetSpeed / currentSpeed;
-  bullet.vx *= scale;
-  bullet.vy *= scale;
-}
-
 function findVictimAt(x, y) {
   // Find the first alive tank hit at a point.
   for (const [name, tank] of Object.entries(STATE.tanks)) {
@@ -79,31 +51,6 @@ function findVictimAt(x, y) {
     if (pointInCircle(x, y, tank.x, tank.y, HIT_RADIUS)) return name;
   }
   return null;
-}
-
-function stepBullet(bullet, deltaSeconds) {
-  // Advance a bullet and bounce it off walls (fragments die on hit).
-  const originalSpeed = Math.hypot(bullet.vx, bullet.vy) || 0;
-  const isFragment = bullet.weapon_type === "fragment";
-
-  let nextX = bullet.x + bullet.vx * deltaSeconds;
-  let nextY = bullet.y + bullet.vy * deltaSeconds;
-
-  if (willHitWallAtX(nextX, bullet.y)) {
-    if (isFragment) return { nextX, nextY, hitWall: true };
-    bullet.vx = -bullet.vx;
-    nextX = bullet.x + bullet.vx * deltaSeconds;
-  }
-
-  if (willHitWallAtY(bullet.x, nextY)) {
-    if (isFragment) return { nextX, nextY, hitWall: true };
-    bullet.vy = -bullet.vy;
-    nextY = bullet.y + bullet.vy * deltaSeconds;
-  }
-
-  if (originalSpeed > 0) normalizeVelocityToSpeed(bullet, originalSpeed);
-
-  return { nextX, nextY, hitWall: false };
 }
 
 function tickLifetime(bullet, deltaSeconds) {
@@ -173,7 +120,7 @@ function updateAllBullets(socket, deltaSeconds) {
     }
 
     for (let s = 0; s < numSubSteps; s++) {
-      const { nextX, nextY, hitWall } = stepBullet(bullet, subDelta);
+      const { nextX, nextY, hitWall } = stepBullet(bullet, subDelta, STATE.wallRects);
       if (hitWall) {
         if (isOwner) toRemove.push(id);
         else localToRemove.push(id);
