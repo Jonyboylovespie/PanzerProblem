@@ -60,10 +60,20 @@ export function mergeTankSnapshot(previous, incoming, playerName, reset = false)
   return tanks;
 }
 
-export function interpolateRemoteTanks(tanks, playerName, deltaSeconds) {
+export function interpolateRemoteTanks(
+  tanks,
+  playerName,
+  deltaSeconds,
+  locallyControlled = [],
+) {
   for (const [name, tank] of Object.entries(tanks)) {
     const motion = tank.motion;
-    if (name === playerName || tank.alive === false || !motion) continue;
+    if (
+      name === playerName ||
+      locallyControlled.includes(name) ||
+      tank.alive === false ||
+      !motion
+    ) continue;
     motion.elapsed += deltaSeconds * 1000;
     const alpha = Math.min(1, motion.elapsed / TANK_UPDATE_INTERVAL_MS);
     const angleDelta = Math.atan2(

@@ -1,13 +1,14 @@
 const EPSILON = 1e-9;
 const WALL_CLEARANCE = 0.01;
 
-function firstWallHit(x, y, dx, dy, walls) {
+function firstWallHit(x, y, dx, dy, walls, queryWalls) {
   let closest = null;
   const minX = Math.min(x, x + dx);
   const maxX = Math.max(x, x + dx);
   const minY = Math.min(y, y + dy);
   const maxY = Math.max(y, y + dy);
-  for (const wall of walls) {
+  const candidates = queryWalls ? queryWalls(minX, minY, maxX, maxY) : walls;
+  for (const wall of candidates) {
     if (maxX < wall.x || minX > wall.x + wall.w ||
         maxY < wall.y || minY > wall.y + wall.h) continue;
     let enter = 0;
@@ -50,7 +51,7 @@ function firstWallHit(x, y, dx, dy, walls) {
   return closest;
 }
 
-export function stepBullet(bullet, deltaSeconds, walls) {
+export function stepBullet(bullet, deltaSeconds, walls, queryWalls = null) {
   let nextX = bullet.x;
   let nextY = bullet.y;
   let remaining = deltaSeconds;
@@ -59,7 +60,7 @@ export function stepBullet(bullet, deltaSeconds, walls) {
   for (let bounce = 0; bounce < 4 && remaining > 0; bounce++) {
     const dx = bullet.vx * remaining;
     const dy = bullet.vy * remaining;
-    const hit = firstWallHit(nextX, nextY, dx, dy, walls);
+    const hit = firstWallHit(nextX, nextY, dx, dy, walls, queryWalls);
     if (!hit) return { nextX: nextX + dx, nextY: nextY + dy, hitWall: false };
 
     // Trace the entire step so a diagonal or fast shot cannot skip a thin wall.

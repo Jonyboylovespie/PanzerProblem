@@ -1,6 +1,7 @@
 import { STATE } from "./state.js";
 import { pointInCircle } from "./helpers.js";
 import { stepBullet } from "./bullet-physics.js";
+import { getWallRectsForBounds } from "./maze.js";
 import { drawBullet, drawLaserTrail, ctx } from "./render.js";
 
 const HIT_RADIUS = 15;
@@ -101,7 +102,9 @@ function updateAllBullets(socket, deltaSeconds) {
   const MAX_STEP_DIST = 5;
 
   for (const [id, bullet] of Object.entries(STATE.bullets)) {
-    const isOwner = bullet.shooter === STATE.playerName;
+    const isOwner =
+      bullet.shooter === STATE.playerName ||
+      (STATE.isHost && STATE.bots.includes(bullet.shooter));
     if (tickLifetime(bullet, deltaSeconds)) {
       if (isOwner) toRemove.push(id);
       else localToRemove.push(id);
@@ -120,7 +123,9 @@ function updateAllBullets(socket, deltaSeconds) {
     }
 
     for (let s = 0; s < numSubSteps; s++) {
-      const { nextX, nextY, hitWall } = stepBullet(bullet, subDelta, STATE.wallRects);
+      const { nextX, nextY, hitWall } = stepBullet(
+        bullet, subDelta, STATE.wallRects, getWallRectsForBounds,
+      );
       if (hitWall) {
         if (isOwner) toRemove.push(id);
         else localToRemove.push(id);

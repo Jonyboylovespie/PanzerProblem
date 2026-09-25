@@ -7,6 +7,7 @@
     isHost: false,
     started: false,
     players: [],
+    bots: [],
     scores: {},
     tanks: {},
     bullets: {},
@@ -15,6 +16,7 @@
     wallsReady: false,
     wallSegments: [],
     wallRects: [],
+    pendingPickupClaims: {},
     pickups: [],
   };
 }

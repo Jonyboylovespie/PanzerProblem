@@ -10,9 +10,13 @@ const MOVE_SPEED_PIXELS_PER_SEC = 150;
 const ROT_SPEED_RAD_PER_SEC = 4;
 const BACKWARD_SPEED_MULTIPLIER = 0.5;
 const FPS_SMOOTHING = 0.9;
+const BOT_MOVE_SPEED = 90;
+const BOT_ROT_SPEED = 2.4;
+const BOT_AIM_TOLERANCE = 0.16;
 
 let socket = null;
 let bulletManager = null;
+const botControllers = new Map();
 
 function attachCopyCodeButton() {
   // Wire up the "Copy" button for the game code.
@@ -131,10 +135,17 @@ function handleShooting() {
 }
 
 function handlePickups(me) {
-  // Check if local player is touching any pickup.
-  if (!STATE.pickups) return;
+  // Claim once per contact; a new pickup snapshot clears claims for collected items.
+  if (!STATE.pickups || (me.weapon && me.weapon !== "default")) return;
   for (const p of STATE.pickups) {
-    if (Math.hypot(me.x - p.x, me.y - p.y) < 20) {
+    const dx = me.x - p.x;
+    const dy = me.y - p.y;
+    if (dx * dx + dy * dy >= 400) {
+      delete STATE.pendingPickupClaims[p.id];
+      continue;
+    }
+    if (STATE.pendingPickupClaims[p.id] === undefined) {
+      STATE.pendingPickupClaims[p.id] = true;
       socket.emit("claim_pickup", {
         game_code: STATE.gameCode,
         player_name: STATE.playerName,
@@ -142,6 +153,121 @@ function handlePickups(me) {
       });
     }
   }
+}
+
+function getBotController(name) {
+  if (!botControllers.has(name)) {
+    botControllers.set(name, {
+      sendMove: createTankMoveSender(socket, {
+        game_code: STATE.gameCode,
+        player_name: name,
+      }),
+      nextShotAt: 0,
+      nextPickupAt: 0,
+      turnUntil: 0,
+      turnDirection: Math.random() < 0.5 ? -1 : 1,
+    });
+  }
+  return botControllers.get(name);
+}
+
+function closestLivingOpponent(playerName, tank) {
+  let closest = null;
+  let closestDistance = Infinity;
+  for (const name of STATE.players) {
+    if (name === playerName || !isAlive(name)) continue;
+    const other = STATE.tanks[name];
+    if (!other) continue;
+    const distance = Math.hypot(other.x - tank.x, other.y - tank.y);
+    if (distance < closestDistance) {
+      closest = other;
+      closestDistance = distance;
+    }
+  }
+  return closest;
+}
+
+function updateBotPlayer(name, nowMs, deltaSeconds) {
+  const tank = STATE.tanks[name];
+  if (!tank || !isAlive(name)) return;
+
+  const controller = getBotController(name);
+  const target = closestLivingOpponent(name, tank);
+  let changed = false;
+  let desiredAngle = null;
+
+  if (target) {
+    desiredAngle = Math.atan2(target.y - tank.y, target.x - tank.x);
+    const aimError = Math.atan2(
+      Math.sin(desiredAngle - tank.angle),
+      Math.cos(desiredAngle - tank.angle),
+    );
+
+    if (controller.turnUntil > nowMs) {
+      changed = attemptRotate(
+        tank,
+        controller.turnDirection * BOT_ROT_SPEED * deltaSeconds,
+      ) || changed;
+    } else if (Math.abs(aimError) > 0.025) {
+      const rotation = Math.sign(aimError) * Math.min(
+        Math.abs(aimError),
+        BOT_ROT_SPEED * deltaSeconds,
+      );
+      changed = attemptRotate(tank, rotation) || changed;
+    }
+  } else if (Math.random() < deltaSeconds * 0.7) {
+    controller.turnDirection = Math.random() < 0.5 ? -1 : 1;
+    changed = attemptRotate(tank, controller.turnDirection * 0.4) || changed;
+  }
+
+  if (deltaSeconds > 0) {
+    const moved = attemptMoveAndResolve(
+      tank,
+      Math.cos(tank.angle) * BOT_MOVE_SPEED * deltaSeconds,
+      Math.sin(tank.angle) * BOT_MOVE_SPEED * deltaSeconds,
+    );
+    changed = moved || changed;
+    if (!moved && controller.turnUntil <= nowMs) {
+      controller.turnDirection = Math.random() < 0.5 ? -1 : 1;
+      controller.turnUntil = nowMs + 350 + Math.random() * 500;
+    }
+  }
+
+  if (
+    target &&
+    controller.turnUntil <= nowMs &&
+    Math.abs(Math.atan2(
+      Math.sin(desiredAngle - tank.angle),
+      Math.cos(desiredAngle - tank.angle),
+    )) < BOT_AIM_TOLERANCE &&
+    nowMs >= controller.nextShotAt
+  ) {
+    bulletManager.spawnFromTank(name);
+    controller.nextShotAt = nowMs + 900 + Math.random() * 700;
+  }
+
+  if (nowMs >= controller.nextPickupAt) {
+    if (tank.weapon === "default") {
+      const pickup = STATE.pickups.find(
+        (item) => Math.hypot(item.x - tank.x, item.y - tank.y) < 20,
+      );
+      if (pickup) {
+        socket.emit("claim_pickup", {
+          game_code: STATE.gameCode,
+          player_name: name,
+          pickup_id: pickup.id,
+        });
+      }
+    }
+    controller.nextPickupAt = nowMs + 350;
+  }
+
+  controller.sendMove(tank, changed, nowMs);
+}
+
+function updateBotPlayers(nowMs, deltaSeconds) {
+  if (!STATE.isHost || !STATE.started) return;
+  for (const name of STATE.bots) updateBotPlayer(name, nowMs, deltaSeconds);
 }
 
 function renderTanks() {
@@ -153,12 +279,27 @@ function renderTanks() {
 }
 
 function attachStartButtonIfHost() {
-  // Attach host-only start handler.
+  // Attach the start handler so a newly promoted host can use the control.
   const startBtn = document.getElementById("start-button");
-  if (!startBtn || !STATE.isHost) return;
+  if (!startBtn) return;
 
   startBtn.addEventListener("click", () => {
+    if (!STATE.isHost || STATE.started) return;
     socket.emit("start_game", {
+      game_code: STATE.gameCode,
+      player_name: STATE.playerName,
+    });
+  });
+}
+
+function attachAddBotButton() {
+  const button = document.getElementById("add-bot-button");
+  if (!button) return;
+
+  button.addEventListener("click", () => {
+    if (!STATE.isHost || STATE.started) return;
+    button.disabled = true;
+    socket.emit("add_bot", {
       game_code: STATE.gameCode,
       player_name: STATE.playerName,
     });
@@ -185,6 +326,7 @@ function startGame() {
   bulletManager = createBulletManager(socket);
 
   attachStartButtonIfHost();
+  attachAddBotButton();
   attachLeaveButton();
   attachCopyCodeButton();
 
@@ -207,6 +349,12 @@ function startGame() {
     clearCanvas();
     drawMaze();
     drawPickups();
+    interpolateRemoteTanks(
+      STATE.tanks,
+      STATE.playerName,
+      deltaSeconds,
+      STATE.isHost ? STATE.bots : [],
+    );
 
     const me = STATE.tanks[STATE.playerName];
     if (me && isAlive(STATE.playerName)) {
@@ -216,9 +364,9 @@ function startGame() {
       handlePickups(me);
     }
 
+    updateBotPlayers(nowMs, deltaSeconds);
     bulletManager.update(deltaSeconds);
     bulletManager.render();
-    interpolateRemoteTanks(STATE.tanks, STATE.playerName, deltaSeconds);
     renderTanks();
 
     requestAnimationFrame(loop);

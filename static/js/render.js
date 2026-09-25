@@ -4,9 +4,17 @@ export let canvas = null;
 export let ctx = null;
 
 let arenaInk = "#d4deec";
+let mazeLayer = null;
+let mazeLayerSegments = null;
+let mazeLayerInk = "";
+let mazeLayerWorldWidth = 0;
+let mazeLayerWorldHeight = 0;
+let mazeLayerPixelWidth = 0;
+let mazeLayerPixelHeight = 0;
 
 function updateRenderTheme() {
   arenaInk = getComputedStyle(document.documentElement).getPropertyValue("--arena-ink").trim();
+  mazeLayerInk = "";
 }
 
 window.addEventListener("themechange", updateRenderTheme);
@@ -34,26 +42,69 @@ function withContext(transformFn, drawFn) {
   ctx.restore();
 }
 
-function configureWallsStyle() {
-  // Apply consistent wall stroke configuration.
-  if (!ctx) return;
-  ctx.strokeStyle = arenaInk;
-  ctx.lineWidth = WALL_THICKNESS;
+function ensureMazeLayer() {
+  if (!canvas || !STATE.wallsReady || !STATE.maze.length) return false;
+  const worldWidth = STATE.maze[0].length * STATE.cellSize;
+  const worldHeight = STATE.maze.length * STATE.cellSize;
+  if (!worldWidth || !worldHeight) return false;
+
+  const scale = Math.min(canvas.width / worldWidth, canvas.height / worldHeight);
+  const pixelWidth = Math.max(1, Math.ceil(worldWidth * scale));
+  const pixelHeight = Math.max(1, Math.ceil(worldHeight * scale));
+  if (
+    mazeLayer &&
+    mazeLayerSegments === STATE.wallSegments &&
+    mazeLayerInk === arenaInk &&
+    mazeLayerWorldWidth === worldWidth &&
+    mazeLayerWorldHeight === worldHeight &&
+    mazeLayerPixelWidth === pixelWidth &&
+    mazeLayerPixelHeight === pixelHeight
+  ) return true;
+
+  const layer = document.createElement("canvas");
+  layer.width = pixelWidth;
+  layer.height = pixelHeight;
+  const layerCtx = layer.getContext("2d");
+  if (!layerCtx) return false;
+
+  layerCtx.setTransform(scale, 0, 0, scale, 0, 0);
+  layerCtx.strokeStyle = arenaInk;
+  layerCtx.lineWidth = WALL_THICKNESS;
+  layerCtx.beginPath();
+  for (const seg of STATE.wallSegments) {
+    layerCtx.moveTo(seg.x1, seg.y1);
+    layerCtx.lineTo(seg.x2, seg.y2);
+  }
+  layerCtx.stroke();
+
+  mazeLayer = layer;
+  mazeLayerSegments = STATE.wallSegments;
+  mazeLayerInk = arenaInk;
+  mazeLayerWorldWidth = worldWidth;
+  mazeLayerWorldHeight = worldHeight;
+  mazeLayerPixelWidth = pixelWidth;
+  mazeLayerPixelHeight = pixelHeight;
+  return true;
 }
 
-function drawWallSegment(seg) {
-  // Draw a single wall segment.
-  if (!ctx) return;
+function drawMazeDirectly() {
+  ctx.strokeStyle = arenaInk;
+  ctx.lineWidth = WALL_THICKNESS;
   ctx.beginPath();
-  ctx.moveTo(seg.x1, seg.y1);
-  ctx.lineTo(seg.x2, seg.y2);
+  for (const seg of STATE.wallSegments) {
+    ctx.moveTo(seg.x1, seg.y1);
+    ctx.lineTo(seg.x2, seg.y2);
+  }
   ctx.stroke();
 }
 
 export function drawMaze() {
   if (!ctx || !STATE.wallsReady) return;
-  configureWallsStyle();
-  for (const seg of STATE.wallSegments) drawWallSegment(seg);
+  if (!ensureMazeLayer()) {
+    drawMazeDirectly();
+    return;
+  }
+  ctx.drawImage(mazeLayer, 0, 0, mazeLayerWorldWidth, mazeLayerWorldHeight);
 }
 
 export function drawTank(x, y, angle, color, name, weapon = "default") {

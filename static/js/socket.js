@@ -213,6 +213,11 @@ function applyPlayers(players) {
   STATE.players = players.slice();
 }
 
+function applyBots(bots) {
+  if (!Array.isArray(bots)) return;
+  STATE.bots = bots.slice();
+}
+
 function applyScores(scores) {
   // Replace scores dict if server provides it.
   if (!scores) return;
@@ -238,10 +243,24 @@ function updateStartButton() {
     getPlayerNames().length >= MIN_PLAYERS_TO_START;
 
   button.disabled = !canStart;
+  button.hidden = !STATE.isHost || STATE.started;
+  updateBotButton();
+}
+
+function updateBotButton() {
+  const button = document.getElementById("add-bot-button");
+  if (!button) return;
+
+  const limit = Number(button.dataset.botLimit) || 4;
+  const atLimit = STATE.bots.length >= limit;
+  button.disabled = !STATE.isHost || STATE.started || atLimit;
+  button.hidden = !STATE.isHost || STATE.started;
+  button.textContent = atLimit ? "Bot limit reached" : "Add Bot";
 }
 
 export function updatePlayersList() {
   // Render the players UI list with host + score + dead status.
+  updateStartButton();
   const listEl = document.getElementById("players-list");
   if (!listEl) return;
 
@@ -252,8 +271,9 @@ export function updatePlayersList() {
         : 0;
 
     const hostSuffix = name === STATE.hostName ? " (Host)" : "";
+    const botSuffix = STATE.bots.includes(name) ? " (Bot)" : "";
     const aliveSuffix = isAlivePlayer(name) ? "" : " (Dead)";
-    return `${name}${hostSuffix}${aliveSuffix} - Score: ${score}`;
+    return `${name}${hostSuffix}${botSuffix}${aliveSuffix} - Score: ${score}`;
   });
   const markupKey = JSON.stringify(labels);
   if (markupKey === previousPlayersMarkup) return;
@@ -271,6 +291,7 @@ function applyGameData(gameData) {
 
   applyTanks(gameData.tanks);
   applyPlayers(gameData.players);
+  applyBots(gameData.bots);
   applyScores(gameData.scores);
   applyHost(gameData.host);
 
@@ -321,6 +342,10 @@ function bindCoreEvents(socket) {
 
   socket.on("update_pickups", (pickups) => {
     STATE.pickups = pickups || [];
+    const currentIds = new Set(STATE.pickups.map((pickup) => pickup.id));
+    for (const id of Object.keys(STATE.pendingPickupClaims)) {
+      if (!currentIds.has(id)) delete STATE.pendingPickupClaims[id];
+    }
   });
 
   socket.on("update_scores", (scores) => {

@@ -56,6 +56,7 @@ games: Dict[str, Dict[str, Any]] = {}
 CELL_SIZE = 70
 LOBBY_MAZE_SIZE = (5, 5)
 MIN_PLAYERS_TO_START = 2
+MAX_BOTS_PER_GAME = 4
 BULLET_SPEED = 300
 BULLET_LIFETIME_SECONDS = 10.0
 TANK_BARREL_OFFSET = 25
@@ -206,6 +207,29 @@ def init_player_score(game: Dict[str, Any], player_name: str) -> None:
     # Initialize player score if missing.
     scores = ensure_dict(game, "scores")
     scores.setdefault(player_name, 0)
+
+
+def add_bot_player(game: Dict[str, Any]) -> Optional[str]:
+    # Add a uniquely named bot using the same player and tank state as humans.
+    players = ensure_list(game, "players")
+    bots = ensure_list(game, "bots")
+    if len(bots) >= MAX_BOTS_PER_GAME:
+        return None
+
+    bot_number = 1
+    while f"Bot {bot_number}" in players:
+        bot_number += 1
+    bot_name = f"Bot {bot_number}"
+
+    spawn_x, spawn_y = get_random_spawn(game["maze"], game["cell_size"])
+    players.append(bot_name)
+    bots.append(bot_name)
+    set_player_tank(
+        game, bot_name, spawn_x, spawn_y, angle=0, color=generate_random_color()
+    )
+    ensure_dict(game, "tanks")[bot_name]["alive"] = True
+    init_player_score(game, bot_name)
+    return bot_name
 
 
 def is_player_alive(game: Dict[str, Any], player_name: str) -> bool:
@@ -442,6 +466,7 @@ def create_game():
         "host": host_name,
         "public": request.form.get("public") == "on",
         "players": [host_name],
+        "bots": [],
         "active": True,
         "started": False,
         "maze": maze,
@@ -518,7 +543,11 @@ def game(code):
         return redirect(url_for("home"))
 
     return render_template(
-        "game.html", game_code=code, game_data=games[code], player_name=player
+        "game.html",
+        game_code=code,
+        game_data=games[code],
+        player_name=player,
+        max_bots_per_game=MAX_BOTS_PER_GAME,
     )
 
 
@@ -552,6 +581,30 @@ def on_start_game(data):
     socketio.start_background_task(weapon_spawner_loop, game_code)
     broadcast_game_state(game_code, game)
     socketio.emit("game_started", {"started": True}, room=game_code)
+
+
+@socketio.on("add_bot")
+def on_add_bot(data):
+    # Only the host can add bots, and only before the game starts.
+    game_code = data.get("game_code")
+    player_name = data.get("player_name")
+    game = require_game(game_code)
+    if (
+        not game
+        or not game.get("active")
+        or game.get("started")
+        or game.get("host") != player_name
+    ):
+        return
+
+    bot_name = add_bot_player(game)
+    if not bot_name:
+        return
+    socketio.emit(
+        "player_join",
+        {"player_name": bot_name, "game_data": game},
+        room=game_code,
+    )
 
 
 @socketio.on("tank_move")
@@ -852,10 +905,13 @@ def on_disconnect():
     scores = ensure_dict(game, "scores")
     scores.pop(player_name, None)
 
-    if player_name == game.get("host") and players:
-        game["host"] = players[0]
+    bot_names = set(ensure_list(game, "bots"))
+    if player_name == game.get("host"):
+        next_host = next((name for name in players if name not in bot_names), None)
+        if next_host:
+            game["host"] = next_host
 
-    if not players:
+    if not any(name not in bot_names for name in players):
         game["active"] = False
 
     emit(

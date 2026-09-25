@@ -4,6 +4,18 @@ import { ctx } from "./render.js";
 export let WALL_LENGTH_MULTIPLIER = 1.04;
 
 const WALL_THICKNESS = 5;
+let wallBuckets = [];
+let wallIndexCellSize = 0;
+let wallIndexWidth = 0;
+let wallIndexHeight = 0;
+
+function wallCellX(x) {
+  return Math.max(0, Math.min(wallIndexWidth - 1, Math.floor(x / wallIndexCellSize)));
+}
+
+function wallCellY(y) {
+  return Math.max(0, Math.min(wallIndexHeight - 1, Math.floor(y / wallIndexCellSize)));
+}
 
 function isPositiveNumber(value) {
   // Validate numeric config values.
@@ -89,6 +101,48 @@ function clearWallCache() {
   STATE.wallSegments = [];
   STATE.wallRects = [];
   STATE.wallsReady = false;
+  wallBuckets = [];
+  wallIndexCellSize = 0;
+  wallIndexWidth = 0;
+  wallIndexHeight = 0;
+}
+
+function buildWallIndex(wallRects) {
+  // Bucket each wall into the maze cells it overlaps for local collision queries.
+  wallIndexCellSize = STATE.cellSize;
+  wallIndexHeight = STATE.maze.length;
+  wallIndexWidth = wallIndexHeight ? STATE.maze[0].length : 0;
+  wallBuckets = Array.from({ length: wallIndexHeight }, () =>
+    Array.from({ length: wallIndexWidth }, () => []),
+  );
+
+  for (const rect of wallRects) {
+    const minX = wallCellX(rect.x);
+    const maxX = wallCellX(rect.x + rect.w);
+    const minY = wallCellY(rect.y);
+    const maxY = wallCellY(rect.y + rect.h);
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) wallBuckets[y][x].push(rect);
+    }
+  }
+}
+
+export function getWallRectsForBounds(minX, minY, maxX, maxY) {
+  // Return only walls indexed in cells touched by a collision query's bounds.
+  if (!wallBuckets.length || !wallIndexCellSize) return STATE.wallRects;
+
+  const firstX = wallCellX(minX);
+  const lastX = wallCellX(maxX);
+  const firstY = wallCellY(minY);
+  const lastY = wallCellY(maxY);
+  const candidates = new Set();
+
+  for (let y = firstY; y <= lastY; y++) {
+    for (let x = firstX; x <= lastX; x++) {
+      for (const rect of wallBuckets[y][x]) candidates.add(rect);
+    }
+  }
+  return [...candidates];
 }
 
 function buildWallSegmentsForMaze() {
@@ -133,6 +187,7 @@ export function rebuildWalls() {
   STATE.wallRects = STATE.wallSegments.map((seg) =>
     buildWallRectFromSegment(seg, ctx.lineWidth),
   );
+  buildWallIndex(STATE.wallRects);
 
   STATE.wallsReady = true;
 }
@@ -256,7 +311,7 @@ export function tankCollides(tank) {
   const corners = getTankCorners(tank);
   const aabb = tankAABB(corners);
 
-  for (const rect of STATE.wallRects) {
+  for (const rect of getWallRectsForBounds(aabb.x, aabb.y, aabb.x + aabb.w, aabb.y + aabb.h)) {
     if (!aabbIntersects(aabb, rect)) continue;
     if (orientedRectVsAABB(corners, rect)) return true;
   }

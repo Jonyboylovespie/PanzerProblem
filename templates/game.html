@@ -11,6 +11,7 @@
             const configEl = document.getElementById("game-config");
             STATE.players = JSON.parse(configEl.dataset.players || "[]");
             STATE.scores = JSON.parse(configEl.dataset.scores || "{}");
+            STATE.bots = JSON.parse(configEl.dataset.bots || "[]");
         </script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
         <script
@@ -25,6 +26,7 @@
             data-started="{{ 'true' if game_data.started else 'false' }}"
             data-players='{{ game_data.players | tojson }}'
             data-scores='{{ (game_data.scores | default({})) | tojson }}'
+            data-bots='{{ (game_data.bots | default([])) | tojson }}'
         ></div>
         <div id="hud">
             <p>
@@ -34,8 +36,9 @@
             </p>
             <p class="game-visibility">{{ "Public game · Listed for everyone" if game_data.public else "Private game · Share your code to invite" }}</p>
             <div id="fps-counter">FPS: --</div>
-            {% if player_name == game_data.host %}
-            <button id="start-button">Start Game</button>
+            {% if not game_data.started %}
+            <button id="add-bot-button" data-bot-limit="{{ max_bots_per_game }}"{% if player_name != game_data.host %} hidden{% endif %}>Add Bot</button>
+            <button id="start-button"{% if player_name != game_data.host %} hidden{% endif %}>Start Game</button>
             {% endif %}
             <button id="leave-button">Leave Game</button>
             <h2>Players</h2>
