@@ -5,14 +5,13 @@ import { createBulletManager } from "./bullets.js";
 import { drawMaze, drawPickups, drawTank, initRender, ctx } from "./render.js";
 import { initSocket, updatePlayersList } from "./socket.js";
 import { createTankMoveSender, interpolateRemoteTanks } from "./tank-sync.js";
+import { createBotController } from "./bot-ai.js";
+import { tankCollides, getWallRectsForBounds } from "./maze.js";
 
 const MOVE_SPEED_PIXELS_PER_SEC = 150;
 const ROT_SPEED_RAD_PER_SEC = 4;
 const BACKWARD_SPEED_MULTIPLIER = 0.5;
 const FPS_SMOOTHING = 0.9;
-const BOT_MOVE_SPEED = 90;
-const BOT_ROT_SPEED = 2.4;
-const BOT_AIM_TOLERANCE = 0.16;
 
 let socket = null;
 let bulletManager = null;
@@ -158,33 +157,19 @@ function handlePickups(me) {
 function getBotController(name) {
   if (!botControllers.has(name)) {
     botControllers.set(name, {
+      brain: createBotController({
+        move: attemptMoveAndResolve,
+        rotate: attemptRotate,
+        canOccupy: (tank) => !tankCollides(tank),
+        queryWalls: getWallRectsForBounds,
+      }),
       sendMove: createTankMoveSender(socket, {
         game_code: STATE.gameCode,
         player_name: name,
       }),
-      nextShotAt: 0,
-      nextPickupAt: 0,
-      turnUntil: 0,
-      turnDirection: Math.random() < 0.5 ? -1 : 1,
     });
   }
   return botControllers.get(name);
-}
-
-function closestLivingOpponent(playerName, tank) {
-  let closest = null;
-  let closestDistance = Infinity;
-  for (const name of STATE.players) {
-    if (name === playerName || !isAlive(name)) continue;
-    const other = STATE.tanks[name];
-    if (!other) continue;
-    const distance = Math.hypot(other.x - tank.x, other.y - tank.y);
-    if (distance < closestDistance) {
-      closest = other;
-      closestDistance = distance;
-    }
-  }
-  return closest;
 }
 
 function updateBotPlayer(name, nowMs, deltaSeconds) {
@@ -192,81 +177,21 @@ function updateBotPlayer(name, nowMs, deltaSeconds) {
   if (!tank || !isAlive(name)) return;
 
   const controller = getBotController(name);
-  const target = closestLivingOpponent(name, tank);
-  let changed = false;
-  let desiredAngle = null;
-
-  if (target) {
-    desiredAngle = Math.atan2(target.y - tank.y, target.x - tank.x);
-    const aimError = Math.atan2(
-      Math.sin(desiredAngle - tank.angle),
-      Math.cos(desiredAngle - tank.angle),
-    );
-
-    if (controller.turnUntil > nowMs) {
-      changed = attemptRotate(
-        tank,
-        controller.turnDirection * BOT_ROT_SPEED * deltaSeconds,
-      ) || changed;
-    } else if (Math.abs(aimError) > 0.025) {
-      const rotation = Math.sign(aimError) * Math.min(
-        Math.abs(aimError),
-        BOT_ROT_SPEED * deltaSeconds,
-      );
-      changed = attemptRotate(tank, rotation) || changed;
-    }
-  } else if (Math.random() < deltaSeconds * 0.7) {
-    controller.turnDirection = Math.random() < 0.5 ? -1 : 1;
-    changed = attemptRotate(tank, controller.turnDirection * 0.4) || changed;
+  const actions = controller.brain.update(STATE, name, nowMs, deltaSeconds);
+  // A shot must use the current aim, even between regular movement packets.
+  controller.sendMove(tank, actions.changed || actions.shoot, nowMs, actions.shoot);
+  if (actions.shoot) bulletManager.spawnFromTank(name);
+  if (actions.pickupId) {
+    socket.emit("claim_pickup", {
+      game_code: STATE.gameCode,
+      player_name: name,
+      pickup_id: actions.pickupId,
+    });
   }
-
-  if (deltaSeconds > 0) {
-    const moved = attemptMoveAndResolve(
-      tank,
-      Math.cos(tank.angle) * BOT_MOVE_SPEED * deltaSeconds,
-      Math.sin(tank.angle) * BOT_MOVE_SPEED * deltaSeconds,
-    );
-    changed = moved || changed;
-    if (!moved && controller.turnUntil <= nowMs) {
-      controller.turnDirection = Math.random() < 0.5 ? -1 : 1;
-      controller.turnUntil = nowMs + 350 + Math.random() * 500;
-    }
-  }
-
-  if (
-    target &&
-    controller.turnUntil <= nowMs &&
-    Math.abs(Math.atan2(
-      Math.sin(desiredAngle - tank.angle),
-      Math.cos(desiredAngle - tank.angle),
-    )) < BOT_AIM_TOLERANCE &&
-    nowMs >= controller.nextShotAt
-  ) {
-    bulletManager.spawnFromTank(name);
-    controller.nextShotAt = nowMs + 900 + Math.random() * 700;
-  }
-
-  if (nowMs >= controller.nextPickupAt) {
-    if (tank.weapon === "default") {
-      const pickup = STATE.pickups.find(
-        (item) => Math.hypot(item.x - tank.x, item.y - tank.y) < 20,
-      );
-      if (pickup) {
-        socket.emit("claim_pickup", {
-          game_code: STATE.gameCode,
-          player_name: name,
-          pickup_id: pickup.id,
-        });
-      }
-    }
-    controller.nextPickupAt = nowMs + 350;
-  }
-
-  controller.sendMove(tank, changed, nowMs);
 }
 
 function updateBotPlayers(nowMs, deltaSeconds) {
-  if (!STATE.isHost || !STATE.started) return;
+  if (!STATE.isHost || !STATE.started || !STATE.wallsReady) return;
   for (const name of STATE.bots) updateBotPlayer(name, nowMs, deltaSeconds);
 }
 

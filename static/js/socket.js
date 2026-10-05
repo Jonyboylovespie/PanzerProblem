@@ -228,6 +228,7 @@ function applyTanks(tanks) {
   if (!tanks) return;
   STATE.tanks = mergeTankSnapshot(
     STATE.tanks || {}, tanks, STATE.playerName, resetTankPositions,
+    STATE.isHost ? STATE.bots : [],
   );
   resetTankPositions = false;
 }
@@ -289,11 +290,11 @@ function applyGameData(gameData) {
   // Apply a server "game_data" snapshot onto STATE.
   if (!gameData) return;
 
-  applyTanks(gameData.tanks);
   applyPlayers(gameData.players);
   applyBots(gameData.bots);
   applyScores(gameData.scores);
   applyHost(gameData.host);
+  applyTanks(gameData.tanks);
 
   STATE.started = isStartedFlag(gameData.started);
 

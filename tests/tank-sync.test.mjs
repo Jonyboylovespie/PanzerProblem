@@ -97,3 +97,27 @@ test("stops, teleports, respawns and round resets apply immediately", () => {
   assert.equal(reset.Me.x, 10);
   assert.equal(reset.Other.x, 10);
 });
+
+test("host bot prediction preserves current aim and position across echoed snapshots", () => {
+  const previous = { Bot: tank(25, { angle: 1.2 }) };
+  const incoming = { Bot: tank(20, { angle: 0.9, stopped: true, weapon: "laser" }) };
+  const tanks = mergeTankSnapshot(previous, incoming, "Host", false, ["Bot"]);
+  assert.equal(tanks.Bot.x, 25);
+  assert.equal(tanks.Bot.angle, 1.2);
+  assert.equal(tanks.Bot.weapon, "laser");
+  assert.equal(tanks.Bot.motion, undefined);
+  const reset = mergeTankSnapshot(tanks, incoming, "Host", true, ["Bot"]);
+  assert.equal(reset.Bot.x, 20);
+  assert.equal(reset.Bot.angle, 0.9);
+});
+
+test("a firing bot sends its current pose reliably even between movement intervals", () => {
+  const { socket, send, sent } = senderFixture();
+  send(tank(0), true, 0);
+  socket.io.engine.transport.writable = false;
+  send(tank(2, { angle: 0.4 }), true, 5, true);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].reliable, true);
+  assert.equal(sent[1].data.x, 2);
+  assert.equal(sent[1].data.angle, 0.4);
+});

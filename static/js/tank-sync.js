@@ -6,15 +6,15 @@ export function createTankMoveSender(socket, identity) {
   let lastSentAt = -Infinity;
   let needsStop = false;
 
-  return (tank, moving, nowMs) => {
+  return (tank, moving, nowMs, reliable = false) => {
     if (moving) needsStop = true;
     if (!socket.connected) return;
-    if (!moving && !needsStop) return;
-    if (moving && nowMs - lastSentAt < TANK_UPDATE_INTERVAL_MS) return;
+    if (!moving && !needsStop && !reliable) return;
+    if (moving && !reliable && nowMs - lastSentAt < TANK_UPDATE_INTERVAL_MS) return;
 
     // Drop intermediate positions under backpressure; reliably send the final one.
-    if (moving && !socket.io.engine.transport.writable) return;
-    const transport = moving ? socket.volatile : socket;
+    if (moving && !reliable && !socket.io.engine.transport.writable) return;
+    const transport = moving && !reliable ? socket.volatile : socket;
     transport.emit("tank_move", {
       ...identity,
       x: tank.x,
@@ -27,7 +27,7 @@ export function createTankMoveSender(socket, identity) {
   };
 }
 
-export function mergeTankSnapshot(previous, incoming, playerName, reset = false) {
+export function mergeTankSnapshot(previous, incoming, playerName, reset = false, locallyControlled = []) {
   const tanks = {};
   for (const [name, snapshot] of Object.entries(incoming)) {
     const tank = { ...snapshot };
@@ -36,7 +36,7 @@ export function mergeTankSnapshot(previous, incoming, playerName, reset = false)
     if (reset || !old || old.alive === false || tank.alive === false) continue;
     if (Math.hypot(tank.x - old.x, tank.y - old.y) >= TELEPORT_DISTANCE) continue;
 
-    if (name === playerName) {
+    if (name === playerName || locallyControlled.includes(name)) {
       // Movement is simulated locally; echoed positions are already out of date.
       tank.x = old.x;
       tank.y = old.y;
