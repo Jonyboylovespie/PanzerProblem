@@ -292,7 +292,14 @@ function startGame() {
 
     updateBotPlayers(nowMs, deltaSeconds);
     if (STATE.started && STATE.wallsReady) {
-      drawLaserPreview(predictLaserPath(me, STATE.cellSize, STATE.wallRects, getWallRectsForBounds));
+      // Laser guidance is visible to everyone, including remote players and
+      // host-controlled bots, while the weapon is equipped and the tank lives.
+      for (const tank of Object.values(STATE.tanks)) {
+        if (!tank || tank.alive === false || tank.weapon !== "laser") continue;
+        drawLaserPreview(predictLaserPath(
+          tank, STATE.cellSize, STATE.wallRects, getWallRectsForBounds,
+        ));
+      }
     }
     bulletManager.update(deltaSeconds);
     bulletManager.render();
