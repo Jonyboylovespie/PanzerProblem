@@ -6,6 +6,7 @@
     hostName: "",
     isHost: false,
     started: false,
+    roundId: 0,
     players: [],
     bots: [],
     scores: {},

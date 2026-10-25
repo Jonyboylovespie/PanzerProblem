@@ -63,6 +63,32 @@ class BulletSpawnTests(unittest.TestCase):
             connection.disconnect()
             games.pop(code, None)
 
+    def test_stale_movement_from_previous_round_cannot_overwrite_respawn(self):
+        app.config.update(TESTING=True)
+        client = app.test_client()
+        response = client.post("/create", data={"host_name": "Runner"})
+        code = response.location.rsplit("/", 1)[1]
+        game = games[code]
+        game["started"] = True
+        game["active"] = False
+        game["round"] = {"id": 4}
+        game["tanks"]["Runner"].update(x=35, y=35, angle=0, alive=True)
+        connection = socketio.test_client(app, flask_test_client=client)
+        try:
+            connection.emit("tank_move", {
+                "game_code": code, "player_name": "Runner", "round_id": 3,
+                "x": 999, "y": 999, "angle": 1.5, "stopped": False,
+            })
+            self.assertEqual((game["tanks"]["Runner"]["x"], game["tanks"]["Runner"]["y"]), (35, 35))
+            connection.emit("tank_move", {
+                "game_code": code, "player_name": "Runner", "round_id": 4,
+                "x": 40, "y": 35, "angle": 0, "stopped": False,
+            })
+            self.assertEqual(game["tanks"]["Runner"]["x"], 40)
+        finally:
+            connection.disconnect()
+            games.pop(code, None)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,9 @@ export function createTankMoveSender(socket, identity) {
     const transport = moving && !reliable ? socket.volatile : socket;
     transport.emit("tank_move", {
       ...identity,
+      // Read the round from the position being sent, so even a captured old
+      // tank reference can never be mislabeled as a move in the new maze.
+      ...(tank.round_id === undefined ? {} : { round_id: tank.round_id }),
       x: tank.x,
       y: tank.y,
       angle: tank.angle,
@@ -27,12 +30,23 @@ export function createTankMoveSender(socket, identity) {
   };
 }
 
-export function mergeTankSnapshot(previous, incoming, playerName, reset = false, locallyControlled = []) {
+export function mergeTankSnapshot(previous, incoming, playerName, reset = false, locallyControlled = [], roundId = null) {
   const tanks = {};
   for (const [name, snapshot] of Object.entries(incoming)) {
     const tank = { ...snapshot };
     const old = previous[name];
+    // Do not combine new positions with an old maze, or roll back to a delayed
+    // previous-round snapshot after the new maze has already been installed.
+    if (roundId !== null && tank.round_id !== roundId) {
+      if (old) tanks[name] = { ...old };
+      continue;
+    }
+    if (old?.round_id !== undefined && tank.round_id < old.round_id) {
+      tanks[name] = { ...old };
+      continue;
+    }
     tanks[name] = tank;
+    if (old && tank.round_id !== old.round_id) continue;
     if (reset || !old || old.alive === false || tank.alive === false) continue;
     if (Math.hypot(tank.x - old.x, tank.y - old.y) >= TELEPORT_DISTANCE) continue;
 

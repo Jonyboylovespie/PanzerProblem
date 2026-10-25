@@ -463,10 +463,10 @@ function hitWithBank(world, fps, velocity = { x: 0, y: 0 }) {
         "The bot must fire while its target is still behind a wall");
       fired = true;
       const weapon = bot.weapon;
-      const speed = { default: 300, frag: 150, laser: 1800 }[weapon];
+      const speed = { default: 300, frag: 150, laser: 2700 }[weapon];
       world.bullets.bank = { ...bulletSpawnPosition(bot, world.wallRects),
         vx: Math.cos(bot.angle) * speed, vy: Math.sin(bot.angle) * speed,
-        lifetime: weapon === "laser" ? 1.5 : 10, shooter: "Bot", weapon_type: weapon };
+        lifetime: weapon === "laser" ? 0.75 : 10, shooter: "Bot", weapon_type: weapon };
     }
     if (!world.bullets.bank) continue;
     const bullet = world.bullets.bank;

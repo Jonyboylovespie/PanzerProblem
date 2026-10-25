@@ -4,7 +4,6 @@ import { canvas } from "./render.js";
 import { mergeTankSnapshot } from "./tank-sync.js";
 
 const MIN_PLAYERS_TO_START = 2;
-let resetTankPositions = false;
 let previousPlayersMarkup = null;
 
 function clampPositiveInt(value, fallback) {
@@ -224,13 +223,12 @@ function applyScores(scores) {
   STATE.scores = scores || {};
 }
 
-function applyTanks(tanks) {
+function applyTanks(tanks, reset = false) {
   if (!tanks) return;
   STATE.tanks = mergeTankSnapshot(
-    STATE.tanks || {}, tanks, STATE.playerName, resetTankPositions,
-    STATE.isHost ? STATE.bots : [],
+    STATE.tanks || {}, tanks, STATE.playerName, reset,
+    STATE.isHost ? STATE.bots : [], STATE.roundId,
   );
-  resetTankPositions = false;
 }
 
 function updateStartButton() {
@@ -294,6 +292,9 @@ function applyGameData(gameData) {
   applyBots(gameData.bots);
   applyScores(gameData.scores);
   applyHost(gameData.host);
+  if (gameData.round && Number.isInteger(Number(gameData.round.id))) {
+    STATE.roundId = Number(gameData.round.id);
+  }
   applyTanks(gameData.tanks);
 
   STATE.started = isStartedFlag(gameData.started);
@@ -306,10 +307,13 @@ function applyMazeData(data) {
   // Apply maze payload and rebuild collision geometry.
   if (!data) return;
 
-  // The next snapshot contains fresh spawns, even if close to the old positions.
-  resetTankPositions = true;
+  if (!Number.isInteger(data.round_id) || data.round_id < STATE.roundId) return;
+  // Install the maze and its respawns in this same event callback. A held
+  // movement key can then continue only from a spawn in the matching maze.
+  STATE.roundId = data.round_id;
   STATE.maze = data.maze;
   STATE.cellSize = data.cell_size;
+  applyTanks(data.tanks, true);
 
   attachFullscreenSupportOnce();
   fitCanvasToDisplayForMaze();

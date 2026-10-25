@@ -66,7 +66,7 @@ WALL_LENGTH_MULTIPLIER = 1.04
 WEAPONS = {
     "default": {"speed": BULLET_SPEED, "lifetime": BULLET_LIFETIME_SECONDS},
     "frag": {"speed": BULLET_SPEED / 2, "lifetime": BULLET_LIFETIME_SECONDS},
-    "laser": {"speed": BULLET_SPEED * 6, "lifetime": 1.5},
+    "laser": {"speed": BULLET_SPEED * 9, "lifetime": 0.75},
     # Missiles fly straight for two seconds, then track for five seconds.
     # The low turn rate makes the tracking deliberately loose and bouncy.
     "misile": {
@@ -330,6 +330,8 @@ def set_player_tank(
     tanks[player_name] = Tank(
         x=x, y=y, angle=angle, color=color, weapon=weapon
     ).to_dict()
+    tanks[player_name]["round_id"] = get_round_id(game)
+    tanks[player_name]["stopped"] = True
 
 
 def respawn_player(game: Dict[str, Any], player_name: str) -> None:
@@ -361,7 +363,12 @@ def broadcast_game_state(game_code: str, game: Dict[str, Any]) -> None:
     # Broadcast maze + tanks to all players.
     socketio.emit(
         "maze_data",
-        {"maze": game["maze"], "cell_size": game["cell_size"]},
+        {
+            "maze": game["maze"],
+            "cell_size": game["cell_size"],
+            "round_id": get_round_id(game),
+            "tanks": {name: tank.copy() for name, tank in game["tanks"].items()},
+        },
         room=game_code,
     )
     socketio.emit("update_tanks", game["tanks"], room=game_code)
@@ -624,6 +631,10 @@ def on_tank_move(data):
 
     game = require_game(game_code)
     if not game:
+        return
+    # Ignore movement packets left over from the previous round. They can
+    # arrive after respawn and otherwise place a tank inside the new maze wall.
+    if game.get("started") and data.get("round_id") != get_round_id(game):
         return
     if not is_player_alive(game, player_name):
         return
@@ -951,6 +962,8 @@ def on_request_maze(data):
             {
                 "maze": games[game_code]["maze"],
                 "cell_size": games[game_code]["cell_size"],
+                "round_id": get_round_id(games[game_code]),
+                "tanks": {name: tank.copy() for name, tank in games[game_code]["tanks"].items()},
             },
         )
 

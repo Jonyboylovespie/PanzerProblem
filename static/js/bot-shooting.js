@@ -1,9 +1,9 @@
 import { bulletSpawnPosition, stepBullet } from "./bullet-physics.js";
 import { MISILE_SPEED } from "./misile.js";
 
-const SPEEDS = { default: 300, frag: 150, laser: 1800, misile: MISILE_SPEED };
+const SPEEDS = { default: 300, frag: 150, laser: 2700, misile: MISILE_SPEED };
 // Bank-shot planning covers only the initial straight flight, before homing.
-const MAX_FLIGHT = { default: 2, frag: 3, laser: 0.8, misile: 2 };
+const MAX_FLIGHT = { default: 2, frag: 3, laser: 0.75, misile: 2 };
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const angleDifference = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 

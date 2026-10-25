@@ -6,7 +6,7 @@ import { blastExposed, canLaunchFrag, choosePickup, findFragCover, retreatFrom, 
 const MOVE_SPEED = 135;
 const ROTATION_SPEED = 3.6;
 const BODY_CLEARANCE = 22;
-const WEAPON_SPEEDS = { default: 300, frag: 150, laser: 1800, misile: MISILE_SPEED };
+const WEAPON_SPEEDS = { default: 300, frag: 150, laser: 2700, misile: MISILE_SPEED };
 const DIRECTIONS = [
   { x: 1, y: 0, wall: "right", opposite: "left" },
   { x: 0, y: 1, wall: "bottom", opposite: "top" },
