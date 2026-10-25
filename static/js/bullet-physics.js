@@ -1,3 +1,5 @@
+import { steerMisile } from "./misile.js";
+
 const EPSILON = 1e-9;
 const WALL_CLEARANCE = 0.01;
 
@@ -51,7 +53,9 @@ function firstWallHit(x, y, dx, dy, walls, queryWalls) {
   return closest;
 }
 
-export function stepBullet(bullet, deltaSeconds, walls, queryWalls = null) {
+export function stepBullet(bullet, deltaSeconds, walls, queryWalls = null, path = null,
+                           tanks = {}, maze = null, cellSize = 70) {
+  steerMisile(bullet, deltaSeconds, tanks, maze, cellSize);
   let nextX = bullet.x;
   let nextY = bullet.y;
   let remaining = deltaSeconds;
@@ -61,11 +65,17 @@ export function stepBullet(bullet, deltaSeconds, walls, queryWalls = null) {
     const dx = bullet.vx * remaining;
     const dy = bullet.vy * remaining;
     const hit = firstWallHit(nextX, nextY, dx, dy, walls, queryWalls);
-    if (!hit) return { nextX: nextX + dx, nextY: nextY + dy, hitWall: false };
+    if (!hit) {
+      nextX += dx;
+      nextY += dy;
+      path?.push({ x: nextX, y: nextY });
+      return { nextX, nextY, hitWall: false };
+    }
 
     // Trace the entire step so a diagonal or fast shot cannot skip a thin wall.
     nextX += dx * hit.fraction + hit.nx * WALL_CLEARANCE;
     nextY += dy * hit.fraction + hit.ny * WALL_CLEARANCE;
+    path?.push({ x: nextX, y: nextY });
     if (bullet.weapon_type === "fragment" || (!hit.nx && !hit.ny)) {
       return { nextX, nextY, hitWall: true };
     }
@@ -74,5 +84,15 @@ export function stepBullet(bullet, deltaSeconds, walls, queryWalls = null) {
     // Use the rest of the frame after impact, independent of display refresh.
     remaining *= 1 - hit.fraction;
   }
+  path?.push({ x: nextX, y: nextY });
   return { nextX, nextY, hitWall: false };
+}
+
+export function bulletSpawnPosition(tank, walls, queryWalls = null) {
+  // Match the server's sweep to the 25px muzzle, including near-wall clearance.
+  const dx = 25 * Math.cos(tank.angle);
+  const dy = 25 * Math.sin(tank.angle);
+  const hit = firstWallHit(tank.x, tank.y, dx, dy, walls, queryWalls);
+  const fraction = hit ? Math.max(0, hit.fraction - WALL_CLEARANCE / 25) : 1;
+  return { x: tank.x + dx * fraction, y: tank.y + dy * fraction };
 }

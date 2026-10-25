@@ -2,7 +2,7 @@ import { STATE } from "./state.js";
 import { pointInCircle } from "./helpers.js";
 import { stepBullet } from "./bullet-physics.js";
 import { getWallRectsForBounds } from "./maze.js";
-import { drawBullet, drawLaserTrail, ctx } from "./render.js";
+import { drawBullet, drawLaserTrail, drawMisile, ctx } from "./render.js";
 
 const HIT_RADIUS = 15;
 
@@ -28,21 +28,34 @@ function emitBulletRemove(socket, bulletId) {
 }
 
 function emitBulletState(socket, bulletId, bullet) {
-  // Send client-authoritative bullet state to server.
+  // Keep homing trajectories aligned across clients at 20Hz.
+  if (bullet.age - (bullet.lastSyncAge ?? -Infinity) < 1 / 20) return;
+  bullet.lastSyncAge = bullet.age;
   socket.emit("bullet_state", {
     game_code: STATE.gameCode,
     bullet_id: bulletId,
-    bullet,
+    bullet: {
+      x: bullet.x, y: bullet.y, vx: bullet.vx, vy: bullet.vy,
+      age: bullet.age, lifetime: bullet.lifetime,
+    },
   });
 }
 
 function emitBulletHit(socket, bulletId, victimName) {
   // Notify server a bullet hit a tank.
-  socket.emit("bullet_hit_tank", {
+  const data = {
     game_code: STATE.gameCode,
     bullet_id: bulletId,
     victim_name: victimName,
-  });
+  };
+  const frag = Object.values(STATE.bullets).find(
+    (bullet) => bullet.shooter === victimName && bullet.weapon_type === "frag",
+  );
+  if (frag) {
+    data.frag_x = frag.x;
+    data.frag_y = frag.y;
+  }
+  socket.emit("bullet_hit_tank", data);
 }
 
 function findVictimAt(x, y) {
@@ -124,7 +137,8 @@ function updateAllBullets(socket, deltaSeconds) {
 
     for (let s = 0; s < numSubSteps; s++) {
       const { nextX, nextY, hitWall } = stepBullet(
-        bullet, subDelta, STATE.wallRects, getWallRectsForBounds,
+        bullet, subDelta, STATE.wallRects, getWallRectsForBounds, null, STATE.tanks,
+        STATE.maze, STATE.cellSize,
       );
       if (hitWall) {
         if (isOwner) toRemove.push(id);
@@ -146,6 +160,7 @@ function updateAllBullets(socket, deltaSeconds) {
       if (bullet.weapon_type === "laser")
         bullet.trail.push({ x: nextX, y: nextY });
     }
+    if (isOwner && bullet.weapon_type === "misile" && !dead) emitBulletState(socket, id, bullet);
     if (dead) continue;
   }
 
@@ -160,7 +175,9 @@ function renderAllBullets() {
       drawLaserTrail(bullet.trail);
     }
 
-    if (bullet.weapon_type === "fragment") {
+    if (bullet.weapon_type === "misile") {
+      drawMisile(bullet);
+    } else if (bullet.weapon_type === "fragment") {
       drawFragment(bullet.x, bullet.y, bullet.vx, bullet.vy);
     } else {
       drawBullet(bullet.x, bullet.y, bullet.weapon_type);

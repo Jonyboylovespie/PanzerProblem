@@ -341,6 +341,14 @@ function bindCoreEvents(socket) {
     }
   });
 
+  socket.on("misile_state", ({ bullet_id, bullet: incoming }) => {
+    const bullet = STATE.bullets[bullet_id];
+    if (!bullet || bullet.weapon_type !== "misile") return;
+    const isOwner = bullet.shooter === STATE.playerName ||
+      (STATE.isHost && STATE.bots.includes(bullet.shooter));
+    if (!isOwner) Object.assign(bullet, incoming);
+  });
+
   socket.on("update_pickups", (pickups) => {
     STATE.pickups = pickups || [];
     const currentIds = new Set(STATE.pickups.map((pickup) => pickup.id));

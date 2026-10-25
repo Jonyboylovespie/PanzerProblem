@@ -1,4 +1,5 @@
 import { STATE } from "./state.js";
+import { MISILE_HOMING_DELAY } from "./misile.js";
 
 export let canvas = null;
 export let ctx = null;
@@ -161,15 +162,63 @@ export function drawBullet(x, y, type = "default") {
   }
 }
 
+export function drawMisile(bullet) {
+  if (!ctx) return;
+  const homing = bullet.age >= (bullet.homing_delay ?? MISILE_HOMING_DELAY);
+  withContext(() => {
+    ctx.translate(bullet.x, bullet.y);
+    ctx.rotate(Math.atan2(bullet.vy, bullet.vx));
+  }, () => {
+    // Nose, body, and fins point along the current ricochet heading.
+    ctx.fillStyle = homing ? "#7cff4f" : "#e1e8ef";
+    ctx.strokeStyle = "#16251c";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(8, 0);
+    ctx.lineTo(2, -3);
+    ctx.lineTo(-4, -3);
+    ctx.lineTo(-7, -6);
+    ctx.lineTo(-6, 0);
+    ctx.lineTo(-7, 6);
+    ctx.lineTo(-4, 3);
+    ctx.lineTo(2, 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#ff914d";
+    ctx.beginPath();
+    ctx.moveTo(-6, -2);
+    ctx.lineTo(-11, 0);
+    ctx.lineTo(-6, 2);
+    ctx.fill();
+  });
+}
+
 export function drawLaserTrail(trail) {
   // Draw a fading red trail for the laser.
   if (!ctx || !trail || trail.length < 2) return;
   ctx.strokeStyle = "#F00";
-  ctx.lineWidth = BULLET.radius * 2;
+  ctx.lineWidth = BULLET.radius * 1.5;
   ctx.beginPath();
   ctx.moveTo(trail[0].x, trail[0].y);
   for (let i = 1; i < trail.length; i++) ctx.lineTo(trail[i].x, trail[i].y);
   ctx.stroke();
+}
+
+export function drawLaserPreview(path) {
+  if (!ctx || path.length < 2) return;
+  ctx.save();
+  ctx.strokeStyle = "#ff5555";
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.setLineDash([6, 5]);
+  ctx.globalAlpha = 0.55;
+  ctx.beginPath();
+  ctx.moveTo(path[0].x, path[0].y);
+  for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+  ctx.stroke();
+  ctx.restore();
 }
 
 export function drawPickups() {

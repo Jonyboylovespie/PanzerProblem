@@ -66,7 +66,16 @@ WALL_LENGTH_MULTIPLIER = 1.04
 WEAPONS = {
     "default": {"speed": BULLET_SPEED, "lifetime": BULLET_LIFETIME_SECONDS},
     "frag": {"speed": BULLET_SPEED / 2, "lifetime": BULLET_LIFETIME_SECONDS},
-    "laser": {"speed": BULLET_SPEED * 5, "lifetime": BULLET_LIFETIME_SECONDS / 5},
+    "laser": {"speed": BULLET_SPEED * 6, "lifetime": 1.5},
+    # Missiles fly straight for two seconds, then track for five seconds.
+    # The low turn rate makes the tracking deliberately loose and bouncy.
+    "misile": {
+        "speed": BULLET_SPEED * 0.8,
+        "lifetime": 7.0,
+        "homing_delay": 2.0,
+        "homing_lifetime": 5.0,
+        "turn_rate": 3.2,
+    },
 }
 
 WEAPON_SPAWN_TIME_MIN = 3.0
@@ -671,6 +680,28 @@ def bullet_spawn_position(game, tank):
     return tank["x"] + dx * fraction, tank["y"] + dy * fraction
 
 
+def detonate_frag(game, frag_id, x=None, y=None):
+    bullets = ensure_dict(game, "bullets")
+    frag = bullets.pop(frag_id)
+    shooter = frag.get("shooter")
+    tank = ensure_dict(game, "tanks").get(shooter)
+    if tank and tank.get("weapon") == "frag":
+        tank["weapon"] = "default"
+    fx = frag["x"] if x is None else x
+    fy = frag["y"] if y is None else y
+    for i in range(random.randint(15, 30)):
+        angle = random.uniform(0, 2 * math.pi)
+        bullets[f"{frag_id}_f_{i}"] = {
+            "x": fx,
+            "y": fy,
+            "vx": BULLET_SPEED * math.cos(angle),
+            "vy": BULLET_SPEED * math.sin(angle),
+            "shooter": shooter,
+            "lifetime": 1.5,
+            "weapon_type": "fragment",
+        }
+
+
 @socketio.on("shoot")
 def on_shoot(data):
     # Handle shooting and detonations.
@@ -697,20 +728,7 @@ def on_shoot(data):
             None,
         )
         if frag_id:
-            b = bullets.pop(frag_id)
-            tank["weapon"] = "default"
-            fx, fy = data.get("frag_x", b["x"]), data.get("frag_y", b["y"])
-            for i in range(random.randint(15, 30)):
-                ang = random.uniform(0, 2 * math.pi)
-                bullets[f"{player_name}_f_{int(time.time() * 1000)}_{i}"] = {
-                    "x": fx,
-                    "y": fy,
-                    "vx": BULLET_SPEED * math.cos(ang),
-                    "vy": BULLET_SPEED * math.sin(ang),
-                    "shooter": player_name,
-                    "lifetime": 1.5,
-                    "weapon_type": "fragment",
-                }
+            detonate_frag(game, frag_id, data.get("frag_x"), data.get("frag_y"))
             emit("update_tanks", tanks, room=game_code)
             emit("update_bullets", bullets, room=game_code)
             return
@@ -725,7 +743,8 @@ def on_shoot(data):
 
     weapon, angle = WEAPONS.get(weapon_type, WEAPONS["default"]), tank["angle"]
     spawn_x, spawn_y = bullet_spawn_position(game, tank)
-    bullets[f"{player_name}_{int(time.time() * 1000)}"] = {
+    bullet_id = f"{player_name}_{int(time.time() * 1000)}"
+    bullets[bullet_id] = {
         "x": spawn_x,
         "y": spawn_y,
         "vx": weapon["speed"] * math.cos(angle),
@@ -734,6 +753,15 @@ def on_shoot(data):
         "lifetime": weapon["lifetime"],
         "weapon_type": weapon_type,
     }
+    if weapon_type == "misile":
+        bullets[bullet_id].update(
+            {
+                "age": 0.0,
+                "homing_delay": weapon["homing_delay"],
+                "homing_lifetime": weapon["homing_lifetime"],
+                "turn_rate": weapon["turn_rate"],
+            }
+        )
     if weapon_type != "frag":
         tank["weapon"] = "default"
         emit("update_tanks", tanks, room=game_code)
@@ -780,31 +808,23 @@ def on_bullet_hit_tank(data):
 
     bullets = ensure_dict(game, "bullets")
     if bullet_id in bullets:
-        bullet = bullets.pop(bullet_id)
+        bullet = bullets[bullet_id]
         if bullet.get("weapon_type") == "frag":
-            shooter = bullet.get("shooter")
-            tanks = ensure_dict(game, "tanks")
-            if shooter in tanks and tanks[shooter].get("weapon") == "frag":
-                tanks[shooter]["weapon"] = "default"
             victim_tank = ensure_dict(game, "tanks").get(victim_name)
             fx, fy = (
                 (victim_tank["x"], victim_tank["y"])
                 if victim_tank
                 else (bullet["x"], bullet["y"])
             )
-            for i in range(random.randint(15, 30)):
-                ang = random.uniform(0, 2 * math.pi)
-                bullets[f"{shooter}_f_{int(time.time() * 1000)}_{i}"] = {
-                    "x": fx,
-                    "y": fy,
-                    "vx": BULLET_SPEED * math.cos(ang),
-                    "vy": BULLET_SPEED * math.sin(ang),
-                    "shooter": shooter,
-                    "lifetime": 1.5,
-                    "weapon_type": "fragment",
-                }
+            detonate_frag(game, bullet_id, fx, fy)
+        else:
+            bullets.pop(bullet_id)
 
     set_player_alive(game, victim_name, False)
+
+    for frag_id, bullet in list(bullets.items()):
+        if bullet.get("shooter") == victim_name and bullet.get("weapon_type") == "frag":
+            detonate_frag(game, frag_id, data.get("frag_x"), data.get("frag_y"))
 
     emit("update_bullets", bullets, room=game_code)
     emit("update_tanks", game["tanks"], room=game_code)
@@ -955,5 +975,42 @@ def on_bullet_remove(data):
         emit("update_bullets", bullets, room=game_code)
 
 
+@socketio.on("bullet_state")
+def on_bullet_state(data):
+    """Relay the owner-simulated missile state to the other clients."""
+    game_code = data.get("game_code")
+    bullet_id = data.get("bullet_id")
+    incoming = data.get("bullet") or {}
+    game = require_game(game_code)
+    player_name = session.get("player_name")
+    if (not game or session.get("game_code") != game_code
+            or bullet_id not in game.get("bullets", {}) or not isinstance(incoming, dict)):
+        return
+    bullet = game["bullets"][bullet_id]
+    owns_bullet = bullet.get("shooter") == player_name or (
+        game.get("host") == player_name and bullet.get("shooter") in game.get("bots", [])
+    )
+    if bullet.get("weapon_type") != "misile" or not owns_bullet:
+        return
+    fields = ("x", "y", "vx", "vy", "lifetime", "age")
+    if any(type(incoming.get(key)) not in (int, float)
+           or not math.isfinite(incoming[key]) for key in fields):
+        return
+    lifetime = WEAPONS["misile"]["lifetime"]
+    if not (0 < incoming["lifetime"] <= lifetime and 0 <= incoming["age"] <= lifetime):
+        return
+    state = {key: incoming[key] for key in fields}
+    bullet.update(state)
+    emit("misile_state", {"bullet_id": bullet_id, "bullet": state},
+         room=game_code, skip_sid=request.sid)
+
+
 if __name__ == "__main__":
-    socketio.run(app, host=APP_HOST, port=APP_PORT, debug=APP_DEBUG)
+    # Use the development server for local play, including detached commands.
+    socketio.run(
+        app,
+        host=APP_HOST,
+        port=APP_PORT,
+        debug=APP_DEBUG,
+        allow_unsafe_werkzeug=True,
+    )

@@ -2,7 +2,8 @@ import { STATE, initStateFromDOM } from "./state.js";
 import { initInput, keys } from "./input.js";
 import { attemptMoveAndResolve, attemptRotate } from "./movement.js";
 import { createBulletManager } from "./bullets.js";
-import { drawMaze, drawPickups, drawTank, initRender, ctx } from "./render.js";
+import { drawMaze, drawPickups, drawTank, drawLaserPreview, initRender, ctx } from "./render.js";
+import { predictLaserPath } from "./laser-preview.js";
 import { initSocket, updatePlayersList } from "./socket.js";
 import { createTankMoveSender, interpolateRemoteTanks } from "./tank-sync.js";
 import { createBotController } from "./bot-ai.js";
@@ -97,7 +98,7 @@ function getMovementDelta(tank, deltaSeconds) {
     deltaSeconds *
     (backward ? BACKWARD_SPEED_MULTIPLIER : 1);
 
-  const dir = backward ? -1 : 1;
+  const dir = forward ? 1 : -1;
   return {
     dx: Math.cos(tank.angle) * speed * dir,
     dy: Math.sin(tank.angle) * speed * dir,
@@ -290,6 +291,9 @@ function startGame() {
     }
 
     updateBotPlayers(nowMs, deltaSeconds);
+    if (STATE.started && STATE.wallsReady) {
+      drawLaserPreview(predictLaserPath(me, STATE.cellSize, STATE.wallRects, getWallRectsForBounds));
+    }
     bulletManager.update(deltaSeconds);
     bulletManager.render();
     renderTanks();

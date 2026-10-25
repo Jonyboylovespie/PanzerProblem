@@ -1,7 +1,12 @@
+import { createBulletAvoidance } from "./bot-evasion.js";
+import { MISILE_SPEED } from "./misile.js";
+import { createRicochetPlanner } from "./bot-shooting.js";
+import { blastExposed, canLaunchFrag, choosePickup, findFragCover, retreatFrom, shouldDetonateFrag } from "./bot-items.js";
+
 const MOVE_SPEED = 135;
 const ROTATION_SPEED = 3.6;
 const BODY_CLEARANCE = 22;
-const WEAPON_SPEEDS = { default: 300, frag: 150, laser: 1500 };
+const WEAPON_SPEEDS = { default: 300, frag: 150, laser: 1800, misile: MISILE_SPEED };
 const DIRECTIONS = [
   { x: 1, y: 0, wall: "right", opposite: "left" },
   { x: 0, y: 1, wall: "bottom", opposite: "top" },
@@ -90,7 +95,7 @@ export function findMazePath(world, from, to) {
   return searchMaze(world, from).pathTo(to);
 }
 
-export function predictIntercept(origin, target, velocity, speed, muzzleOffset = 0) {
+export function predictIntercept(origin, target, velocity, speed, muzzleOffset = 0, maxTime = 1.2) {
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
   const a = velocity.x ** 2 + velocity.y ** 2 - speed ** 2;
@@ -105,7 +110,7 @@ export function predictIntercept(origin, target, velocity, speed, muzzleOffset =
       (-b + Math.sqrt(discriminant)) / (2 * a)].filter((value) => value > 0);
     if (roots.length) time = Math.min(...roots);
   }
-  time = Math.min(time, 1.2);
+  time = Math.min(time, maxTime);
   return { x: target.x + velocity.x * time, y: target.y + velocity.y * time };
 }
 
@@ -121,7 +126,22 @@ export function createBotController({ move, rotate, canOccupy, queryWalls }) {
   let nextPickupAt = 0;
   let blockedFor = 0;
   let recoveryUntil = 0;
+  let driveSpeed = 0;
+  let maneuver = null;
+  let nextManeuverAt = 0;
+  let maneuverSign = 1;
+  let pickupGoal = null;
+  let coverGoal = null;
+  let lastWeapon = null;
+  let lastFragId = null;
+  let lastDangerId = null;
+  let nextDetonateAt = 0;
   const observations = new Map();
+  const ricochets = createRicochetPlanner({ canOccupy, queryWalls, clearPath: clear });
+  const avoidance = createBulletAvoidance({
+    canOccupy, queryWalls, moveSpeed: MOVE_SPEED, turnSpeed: ROTATION_SPEED,
+    predictDriveSpeed: safeDriveSpeed,
+  });
 
   function clear(world, from, to, padding = 0) {
     const walls = queryWalls ? queryWalls(
@@ -131,7 +151,7 @@ export function createBotController({ move, rotate, canOccupy, queryWalls }) {
     return hasClearPath(from, to, walls, padding);
   }
 
-  function plan(world, tank, opponents, nowMs) {
+  function plan(world, tank, opponents, nowMs, name, fragDanger) {
     const search = searchMaze(world, tank);
     let best = null;
     for (const [otherName, other] of opponents) {
@@ -154,21 +174,15 @@ export function createBotController({ move, rotate, canOccupy, queryWalls }) {
     targetName = best?.name ?? null;
     let goal = best?.tank;
     let key = targetName;
-    // Take a nearby weapon along the route when an opponent cannot be shot yet.
-    if (best && !best.visible && (tank.weapon || "default") === "default") {
-      let closestSteps = Infinity;
-      for (const pickup of world.pickups) {
-        const steps = search.distances[cellIndex(world, pickup)];
-        if (steps >= 0 && steps <= 3 && steps <= best.steps + 1 && steps < closestSteps) {
-          goal = pickup;
-          key = `pickup:${pickup.id}`;
-          closestSteps = steps;
-        }
-      }
-    }
+    pickupGoal = choosePickup({ world, tank, name, opponents, target: best?.tank,
+      search, cellIndex, searchMaze, clear, previousId: pickupGoal?.id });
+    coverGoal = fragDanger ? findFragCover(world, tank, fragDanger, search, clear) : null;
+    if (pickupGoal) { goal = pickupGoal; key = `pickup:${pickupGoal.id}`; }
+    if (coverGoal) { goal = coverGoal; key = "frag-cover"; pickupGoal = null; }
     const newGoalKey = goal ? `${key}:${cellIndex(world, goal)}` : null;
     if (goal && (newGoalKey !== goalKey || !route.length)) {
       route = search.pathTo(goal);
+      if (pickupGoal && distance(route.at(-1), pickupGoal) > 1) route.push({ x: pickupGoal.x, y: pickupGoal.y });
       // Stay on corridor centers at corners; skip a center only if the entire
       // shortcut has room for the tank, including its barrel during turns.
       if (route.length > 1 && clear(world, tank, route[1], BODY_CLEARANCE)) route.shift();
@@ -177,38 +191,56 @@ export function createBotController({ move, rotate, canOccupy, queryWalls }) {
     nextThinkAt = nowMs + 200;
   }
 
-  function dodge(world, tank) {
-    let threat = null;
-    for (const bullet of Object.values(world.bullets)) {
-      const speedSquared = bullet.vx ** 2 + bullet.vy ** 2;
-      if (!speedSquared) continue;
-      const dx = tank.x - bullet.x;
-      const dy = tank.y - bullet.y;
-      const time = (dx * bullet.vx + dy * bullet.vy) / speedSquared;
-      if (time < 0 || time > 0.55 || time > bullet.lifetime) continue;
-      const closest = { x: bullet.x + bullet.vx * time, y: bullet.y + bullet.vy * time };
-      if (distance(tank, closest) > 27 || !clear(world, bullet, closest)) continue;
-      if (!threat || time < threat.time) threat = { bullet, time };
+  function reposition(world, tank, target, aimAngle, nowMs) {
+    if (nowMs < nextManeuverAt) return maneuver;
+    nextManeuverAt = nowMs + 650;
+    maneuver = null;
+    // The turret follows the body. Use the wait between shots to change
+    // position, then return to the original intercept aim when ready to fire.
+    const range = distance(tank, target);
+    for (const side of [maneuverSign, -maneuverSign]) {
+      const angle = aimAngle + side * 1.15;
+      const drive = range < 125 ? -0.65 : 1;
+      const end = { x: tank.x + Math.cos(angle) * 50 * drive,
+        y: tank.y + Math.sin(angle) * 50 * drive };
+      if (!clear(world, tank, end, BODY_CLEARANCE) || !canOccupy({ ...end, angle })) continue;
+      maneuverSign = side;
+      maneuver = { angle, drive };
+      break;
     }
-    if (!threat) return null;
-    const { bullet, time } = threat;
-    const perpendicular = Math.atan2(bullet.vy, bullet.vx) + Math.PI / 2;
-    let best = null;
-    for (const heading of [tank.angle, tank.angle + Math.PI, perpendicular, perpendicular + Math.PI]) {
-      const backward = Math.abs(angleDifference(heading, tank.angle)) > Math.PI / 2;
-      const bodyAngle = backward ? heading + Math.PI : heading;
-      const turnTime = Math.abs(angleDifference(bodyAngle, tank.angle)) / ROTATION_SPEED;
-      const drive = backward ? -0.65 : 1;
-      const travel = MOVE_SPEED * Math.abs(drive) * Math.max(0, Math.max(time, 0.25) - turnTime);
-      const end = { x: tank.x + Math.cos(heading) * travel, y: tank.y + Math.sin(heading) * travel };
-      if (travel < 5 || !canOccupy({ ...tank, angle: bodyAngle }) ||
-          !clear(world, tank, end, BODY_CLEARANCE)) continue;
-      const miss = Math.abs((end.x - bullet.x) * bullet.vy - (end.y - bullet.y) * bullet.vx)
-        / Math.hypot(bullet.vx, bullet.vy);
-      const score = miss - turnTime * 12;
-      if (!best || score > best.score) best = { angle: bodyAngle, drive, score };
+    // In a narrow corridor, advance or retreat without turning into its walls.
+    if (!maneuver) {
+      const drive = range < 145 ? -0.65 : 1;
+      const end = { x: tank.x + Math.cos(aimAngle) * 40 * drive,
+        y: tank.y + Math.sin(aimAngle) * 40 * drive };
+      if (clear(world, tank, end, BODY_CLEARANCE)) maneuver = { angle: aimAngle, drive };
     }
-    return best?.score > 5 ? best : null;
+    return maneuver;
+  }
+
+  function safeDriveSpeed(tank, desiredAngle, requestedSpeed, deltaSeconds, distanceLimit, currentSpeed = driveSpeed) {
+    // Test the curved path, not only the endpoint. Brake ahead of tight corners
+    // so there is still room to turn instead of wedging the barrel into a wall.
+    const horizon = 0.22;
+    const slice = horizon / 8;
+    const acceleration = 900 * deltaSeconds;
+    const speed = currentSpeed + Math.max(-acceleration, Math.min(acceleration, requestedSpeed - currentSpeed));
+    for (const multiplier of [1, 0.5, 0.25]) {
+      const ghost = { ...tank };
+      let remaining = distanceLimit;
+      let safe = true;
+      for (let i = 0; i < 8; i++) {
+        const error = angleDifference(desiredAngle, ghost.angle);
+        ghost.angle += Math.sign(error) * Math.min(Math.abs(error), ROTATION_SPEED * slice);
+        const travel = Math.sign(speed) * Math.min(Math.abs(speed) * multiplier * slice, remaining);
+        remaining -= Math.abs(travel);
+        ghost.x += Math.cos(ghost.angle) * travel;
+        ghost.y += Math.sin(ghost.angle) * travel;
+        if (!canOccupy(ghost)) { safe = false; break; }
+      }
+      if (safe) return speed * multiplier;
+    }
+    return 0;
   }
 
   return {
@@ -226,41 +258,95 @@ export function createBotController({ move, rotate, canOccupy, queryWalls }) {
         // moving opponent instead of immediately wasting the only projectile.
         nextShotAt = nowMs + 200;
         nextPickupAt = 0;
+        pickupGoal = coverGoal = null;
+        lastWeapon = lastFragId = lastDangerId = null;
+        nextDetonateAt = 0;
+        driveSpeed = 0;
+        maneuver = null;
+        nextManeuverAt = 0;
+        maneuverSign = [...name].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 2 ? 1 : -1;
         observations.clear();
+        avoidance.reset();
+        ricochets.reset();
       }
       const step = MOVE_SPEED * Math.min(deltaSeconds, 0.05);
-      if (nowMs < recoveryUntil) {
-        result.changed = move(tank, -Math.cos(tank.angle) * step * 0.65, -Math.sin(tank.angle) * step * 0.65);
-        if (!result.changed) result.changed = move(tank, Math.cos(tank.angle) * step * 0.35, Math.sin(tank.angle) * step * 0.35);
-        return result;
-      }
       const opponents = Object.entries(world.tanks).filter(([otherName, other]) =>
         otherName !== name && other && other.alive !== false);
-      if (nowMs >= nextThinkAt || (targetName &&
+      const weapon = tank.weapon || "default";
+      const ownFrags = Object.entries(world.bullets).find(([, bullet]) => bullet.shooter === name && bullet.weapon_type === "frag");
+      const activeFrag = ownFrags?.[1];
+      const fragId = ownFrags?.[0] ?? null;
+      const enemyFragEntry = Object.entries(world.bullets).filter(([, bullet]) => bullet.shooter !== name &&
+        bullet.weapon_type === "frag" && distance(tank, bullet) < 170 && blastExposed(world, bullet, tank, clear))
+        .sort((a, b) => distance(tank, a[1]) - distance(tank, b[1]))[0];
+      const enemyFrag = enemyFragEntry?.[1];
+      const fragDanger = enemyFrag || activeFrag;
+      const dangerId = enemyFragEntry?.[0] ?? fragId;
+      if (dangerId !== lastDangerId) { nextThinkAt = 0; lastDangerId = dangerId; }
+      if (fragId !== lastFragId) { nextDetonateAt = 0; nextThinkAt = 0; lastFragId = fragId; }
+      if (nowMs >= nextThinkAt || weapon !== lastWeapon || (pickupGoal && !world.pickups.some((pickup) => pickup.id === pickupGoal.id)) || (targetName &&
           (!world.tanks[targetName] || world.tanks[targetName].alive === false))) {
-        plan(world, tank, opponents, nowMs);
+        plan(world, tank, opponents, nowMs, name, fragDanger);
+        lastWeapon = weapon;
       }
       const target = world.tanks[targetName];
       const visible = target && clear(world, tank, target, 4);
+      const velocity = observations.get(targetName)?.velocity || { x: 0, y: 0 };
       let aim = target;
       if (visible) {
-        const velocity = observations.get(targetName)?.velocity || { x: 0, y: 0 };
-        const prediction = predictIntercept(tank, target, velocity, WEAPON_SPEEDS[tank.weapon] || 300, 25);
+        const prediction = predictIntercept(tank, target, velocity, WEAPON_SPEEDS[weapon] || 300, 25, weapon === "frag" ? 3 : 1.2);
         if (clear(world, target, prediction, 15) && clear(world, tank, prediction, 4)) aim = prediction;
       }
       while (route.length && distance(tank, route[0]) < 5) route.shift();
+      // Look through successive waypoints only when the entire shortcut fits
+      // the tank. Open stretches no longer require a stop at every cell center.
+      while (route.length > 1 && clear(world, tank, route[1], BODY_CLEARANCE)) route.shift();
       let desiredAngle = tank.angle;
+      const aimAngle = visible ? Math.atan2(aim.y - tank.y, aim.x - tank.x) : null;
       let drive = 0;
       let travel = step;
-      const evasion = dodge(world, tank);
-      if (evasion) {
-        desiredAngle = evasion.angle;
-        drive = evasion.drive;
-        goalKey = null;
+      let distanceLimit = Infinity;
+      const activeShot = Object.values(world.bullets).some((bullet) =>
+        bullet.shooter === name && (bullet.weapon_type || "default") === (tank.weapon || "default"));
+      const bankShot = !visible && !activeShot && !pickupGoal && !fragDanger && nowMs >= recoveryUntil
+        ? ricochets.update(world, tank, target, targetName, velocity, nowMs) : null;
+      if (nowMs < recoveryUntil) {
+        drive = -0.65;
+        const behind = { ...tank, x: tank.x - Math.cos(tank.angle) * step * 0.65,
+          y: tank.y - Math.sin(tank.angle) * step * 0.65 };
+        if (!canOccupy(behind)) drive = 0.35;
+      } else if (fragDanger && !blastExposed(world, fragDanger, tank, clear)) {
+        // Stay behind cover while controlling a grenade; do not walk back out
+        // into the fragments just to keep aiming at an opponent.
+        drive = 0;
+      } else if ((coverGoal || pickupGoal) && route.length) {
+        const waypoint = route[0];
+        desiredAngle = Math.atan2(waypoint.y - tank.y, waypoint.x - tank.x);
+        drive = 1;
+        if (Math.abs(angleDifference(desiredAngle, tank.angle)) > 2.3) { desiredAngle += Math.PI; drive = -0.65; }
+        distanceLimit = distance(tank, waypoint);
+        travel = Math.min(step, distanceLimit / Math.abs(drive));
+      } else if (fragDanger) {
+        const retreat = retreatFrom(world, tank, fragDanger, clear, canOccupy);
+        if (retreat) { desiredAngle = retreat.angle; drive = retreat.drive; }
+      } else if (bankShot) {
+        // Settle briefly to aim the bank, then continue moving once it is in
+        // flight. A threatened tank will still override this with an escape.
+        desiredAngle = bankShot.angle;
       } else if (visible) {
-        desiredAngle = Math.atan2(aim.y - tank.y, aim.x - tank.x);
-        if (distance(tank, target) < 85) drive = -0.65;
-        else if (distance(tank, target) > 190 && clear(world, tank, target, BODY_CLEARANCE)) drive = 1;
+        desiredAngle = aimAngle;
+        const range = distance(tank, target);
+        const minimum = weapon === "frag" ? 170 : weapon === "laser" ? 120 : 85;
+        const maximum = weapon === "frag" ? 300 : weapon === "laser" ? 360 : weapon === "misile" ? 420 : 190;
+        if (range < minimum) {
+          const retreat = weapon === "frag" ? retreatFrom(world, tank, target, clear, canOccupy) : null;
+          if (retreat) { desiredAngle = retreat.angle; drive = retreat.drive; }
+          else drive = -0.65;
+        } else if (range > maximum && clear(world, tank, target, BODY_CLEARANCE)) drive = 1;
+        if (activeShot && distance(tank, target) >= 85 && distance(tank, target) <= 250) {
+          const movement = reposition(world, tank, target, aimAngle, nowMs);
+          if (movement) { desiredAngle = movement.angle; drive = movement.drive; }
+        } else { maneuver = null; nextManeuverAt = 0; }
       } else if (route.length) {
         const waypoint = route[0];
         desiredAngle = Math.atan2(waypoint.y - tank.y, waypoint.x - tank.x);
@@ -270,6 +356,19 @@ export function createBotController({ move, rotate, canOccupy, queryWalls }) {
           drive = -0.65;
         }
         travel = Math.min(step, distance(tank, waypoint) / Math.abs(drive));
+        distanceLimit = distance(tank, waypoint);
+      }
+      const evasion = avoidance.update(world, tank,
+        { angle: desiredAngle, drive, distanceLimit }, driveSpeed, nowMs);
+      if (evasion) {
+        desiredAngle = evasion.angle;
+        drive = evasion.drive;
+        distanceLimit = Infinity;
+        travel = step;
+        goalKey = null;
+        recoveryUntil = 0;
+        maneuver = null;
+        nextManeuverAt = 0;
       }
       const error = angleDifference(desiredAngle, tank.angle);
       let blocked = false;
@@ -279,12 +378,21 @@ export function createBotController({ move, rotate, canOccupy, queryWalls }) {
         result.changed ||= rotated;
         blocked = !rotated;
       }
-      // Rotate before driving, rather than cutting diagonally across corners.
-      if (drive && Math.abs(angleDifference(desiredAngle, tank.angle)) < 0.08) {
-        const moved = move(tank, Math.cos(tank.angle) * travel * drive, Math.sin(tank.angle) * travel * drive);
+      // Steer and drive together with gradual acceleration. Slow down for a
+      // large heading change and let collision forecasts enforce corner space.
+      const alignment = Math.max(0, Math.cos(angleDifference(desiredAngle, tank.angle)));
+      driveSpeed = safeDriveSpeed(tank, desiredAngle, MOVE_SPEED * drive * alignment ** 2, deltaSeconds, distanceLimit);
+      const movement = Math.sign(driveSpeed) * Math.min(Math.abs(driveSpeed) * deltaSeconds,
+        drive ? travel * Math.abs(drive) : step);
+      if (Math.abs(movement) > 0.001) {
+        const moved = move(tank, Math.cos(tank.angle) * movement, Math.sin(tank.angle) * movement);
         result.changed ||= moved;
         blocked ||= !moved;
+        if (!moved) driveSpeed = 0;
       }
+      // A forecast can stop the tank before an actual collision. Treat a
+      // sustained aligned stop as blocked too, so it still gets unstuck.
+      blocked ||= !!drive && Math.abs(driveSpeed) < 1 && Math.abs(error) < 0.08;
       blockedFor = blocked ? blockedFor + deltaSeconds : 0;
       if (blockedFor > 0.28) {
         recoveryUntil = nowMs + 250;
@@ -292,24 +400,35 @@ export function createBotController({ move, rotate, canOccupy, queryWalls }) {
         route = [];
         nextThinkAt = blockedFor = 0;
       }
-      const activeFrag = Object.values(world.bullets).find((bullet) =>
-        bullet.shooter === name && bullet.weapon_type === "frag");
-      if (nowMs >= nextShotAt) {
-        if (activeFrag && distance(tank, activeFrag) > 110 && opponents.some(([, other]) =>
-          distance(other, activeFrag) < 100 && clear(world, activeFrag, other, 2))) {
-          result.shoot = true;
-        } else if (!activeFrag && visible && !evasion && distance(tank, target) > 40) {
+      // Remote detonation is independent of the launch cooldown and body aim.
+      if (activeFrag && weapon === "frag" && nowMs >= nextDetonateAt && shouldDetonateFrag(world, tank, activeFrag,
+          opponents, observations, clear, canOccupy)) {
+        result.shoot = true;
+        nextDetonateAt = nowMs + 250;
+        nextShotAt = nowMs + 420;
+      }
+      if (nowMs >= nextShotAt && nowMs >= recoveryUntil) {
+        if (!activeFrag && (visible || bankShot) && !evasion && distance(tank, target) > 40) {
           const muzzle = { x: tank.x + Math.cos(tank.angle) * 25, y: tank.y + Math.sin(tank.angle) * 25 };
-          const tolerance = Math.min(0.10, Math.atan2(10, distance(tank, aim)));
-          const active = Object.values(world.bullets).some((bullet) =>
-            bullet.shooter === name && (bullet.weapon_type || "default") === (tank.weapon || "default"));
-          if (!active && Math.abs(angleDifference(desiredAngle, tank.angle)) < tolerance &&
-              clear(world, tank, muzzle, 4) && clear(world, muzzle, aim, 4)) result.shoot = true;
+          const shotAngle = visible ? aimAngle : bankShot.angle;
+          const shotDistance = visible ? distance(tank, aim) : bankShot.length;
+          const tolerance = Math.min(0.10, Math.atan2(10, shotDistance));
+          if (!activeShot && Math.abs(angleDifference(shotAngle, tank.angle)) < tolerance) {
+            result.shoot = visible ? clear(world, tank, muzzle, 4) && clear(world, muzzle, aim, 4)
+              : ricochets.canFire(world, tank, target, velocity);
+            if (result.shoot && weapon === "frag" && !canLaunchFrag(world, tank, target, velocity, clear, canOccupy, queryWalls)) {
+              result.shoot = false;
+              nextShotAt = nowMs + 200;
+            }
+          }
         }
         if (result.shoot) nextShotAt = nowMs + 420;
       }
-      if (nowMs >= nextPickupAt && (tank.weapon || "default") === "default") {
-        result.pickupId = world.pickups.find((pickup) => distance(tank, pickup) < 20)?.id ?? null;
+      if (nowMs >= nextPickupAt && weapon === "default" && !activeFrag) {
+        const nearby = world.pickups.filter((pickup) => ["laser", "frag", "misile"].includes(pickup.type) &&
+          distance(tank, pickup) < 20 && clear(world, tank, pickup));
+        result.pickupId = nearby.find((pickup) => pickup.id === pickupGoal?.id)?.id
+          ?? nearby.sort((a, b) => (a.type === "laser" ? -1 : 1) - (b.type === "laser" ? -1 : 1))[0]?.id ?? null;
         if (result.pickupId) nextPickupAt = nowMs + 350;
       }
       return result;
