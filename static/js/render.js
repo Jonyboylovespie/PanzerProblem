@@ -1,5 +1,5 @@
 import { STATE } from "./state.js";
-import { MISILE_HOMING_DELAY } from "./misile.js";
+import { findHomingTarget, MISILE_HOMING_DELAY } from "./misile.js";
 
 export let canvas = null;
 export let ctx = null;
@@ -165,12 +165,14 @@ export function drawBullet(x, y, type = "default") {
 export function drawMisile(bullet) {
   if (!ctx) return;
   const homing = bullet.age >= (bullet.homing_delay ?? MISILE_HOMING_DELAY);
+  const targetName = bullet.homingTarget ?? findHomingTarget(bullet, STATE.tanks)?.name;
+  const targetColor = homing && targetName ? STATE.tanks[targetName]?.color : null;
   withContext(() => {
     ctx.translate(bullet.x, bullet.y);
     ctx.rotate(Math.atan2(bullet.vy, bullet.vx));
   }, () => {
     // Nose, body, and fins point along the current ricochet heading.
-    ctx.fillStyle = homing ? "#7cff4f" : "#e1e8ef";
+    ctx.fillStyle = targetColor || (homing ? "#7cff4f" : "#e1e8ef");
     ctx.strokeStyle = "#16251c";
     ctx.lineWidth = 1;
     ctx.beginPath();

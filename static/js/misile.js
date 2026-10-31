@@ -128,6 +128,24 @@ function nextWaypoint(from, target, maze, cellSize) {
   return route.path.length ? { ...route.path[0], corner: true } : null;
 }
 
+// Return the nearest living opponent that this missile can home toward.
+// Keeping target selection in one place ensures guidance and rendering agree
+// about which player's color should be shown on a homing missile.
+export function findHomingTarget(bullet, tanks = {}) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const [name, tank] of Object.entries(tanks)) {
+    if (name === bullet.shooter) continue;
+    if (!tank || tank.alive === false) continue;
+    const distance = Math.hypot(tank.x - bullet.x, tank.y - bullet.y);
+    if (distance < nearestDistance) {
+      nearest = { name, tank };
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
 // Keep guidance separate from wall reflection: a bounce changes the heading,
 // and the next step can only slowly bend that new heading toward a tank.
 export function steerMisile(bullet, deltaSeconds, tanks = {}, maze = null, cellSize = 70) {
@@ -139,25 +157,15 @@ export function steerMisile(bullet, deltaSeconds, tanks = {}, maze = null, cellS
   const homingStep = Math.max(0, Math.min(bullet.age, end) - Math.max(age, delay));
   if (!homingStep) return;
 
-  let nearest = null;
-  let nearestDistance = Infinity;
-  // Track opponents; the usual collision rules still allow self-hits.
-  for (const [name, tank] of Object.entries(tanks)) {
-    if (name === bullet.shooter) continue;
-    if (!tank || tank.alive === false) continue;
-    const distance = Math.hypot(tank.x - bullet.x, tank.y - bullet.y);
-    if (distance < nearestDistance) {
-      nearest = tank;
-      nearestDistance = distance;
-    }
-  }
-  if (!nearest) return;
+  const target = findHomingTarget(bullet, tanks);
+  bullet.homingTarget = target?.name ?? null;
+  if (!target) return;
   // Guidance changes heading only. Missile speed is constant through turns
   // and maze navigation, just as it is through wall reflections.
   const speed = Math.hypot(bullet.vx, bullet.vy) || MISILE_SPEED;
   const heading = Math.atan2(bullet.vy, bullet.vx);
   const navigating = maze?.length && cellSize > 0;
-  const waypoint = navigating ? nextWaypoint(bullet, nearest, maze, cellSize) : nearest;
+  const waypoint = navigating ? nextWaypoint(bullet, target.tank, maze, cellSize) : target.tank;
   if (!waypoint) return;
   const desired = Math.atan2(waypoint.y - bullet.y, waypoint.x - bullet.x);
   const error = Math.atan2(Math.sin(desired - heading), Math.cos(desired - heading));

@@ -151,12 +151,15 @@ test("homing chooses the nearest living opponent and reacquires as tanks move or
     Far: { x: 0, y: -100 },
   };
   steerMisile(bullet, 0.1, tanks);
+  assert.equal(bullet.homingTarget, "Near");
   close(heading(bullet), MISILE_TURN_RATE * 0.1);
   tanks.Far.y = -10;
   steerMisile(bullet, 0.1, tanks);
+  assert.equal(bullet.homingTarget, "Far");
   close(heading(bullet), 0);
   tanks.Far.alive = false;
   steerMisile(bullet, 0.1, tanks);
+  assert.equal(bullet.homingTarget, "Near");
   close(heading(bullet), MISILE_TURN_RATE * 0.1);
 });
 
