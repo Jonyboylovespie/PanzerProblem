@@ -52,6 +52,10 @@ socketio = SocketIO(app)
 
 # In-memory storage for active games
 games: Dict[str, Dict[str, Any]] = {}
+# HTTP creates the player record before the browser opens its Socket.IO
+# connection. Keep those records provisional briefly so abandoned joins do not
+# leave ghost players in a game forever.
+pending_player_joins: Dict[Tuple[str, str], float] = {}
 
 CELL_SIZE = 70
 LOBBY_MAZE_SIZE = (5, 5)
@@ -80,6 +84,51 @@ WEAPONS = {
 
 WEAPON_SPAWN_TIME_MIN = 3.0
 WEAPON_SPAWN_TIME_MAX = 8.0
+PLAYER_JOIN_GRACE_SECONDS = 15.0
+
+
+def remove_player_from_game(game_code: str, player_name: str) -> bool:
+    """Remove a player and close or re-host the game when appropriate."""
+    game = require_game(game_code)
+    if not game:
+        return False
+
+    players = ensure_list(game, "players")
+    if player_name not in players:
+        return False
+
+    players.remove(player_name)
+    pending_player_joins.pop((game_code, player_name), None)
+    ensure_dict(game, "tanks").pop(player_name, None)
+    ensure_dict(game, "scores").pop(player_name, None)
+
+    bot_names = set(ensure_list(game, "bots"))
+    if player_name == game.get("host"):
+        next_host = next((name for name in players if name not in bot_names), None)
+        if next_host:
+            game["host"] = next_host
+
+    if not any(name not in bot_names for name in players):
+        game["active"] = False
+    return True
+
+
+def expire_pending_player_joins() -> None:
+    """Remove browser joins that never establish a Socket.IO connection."""
+    now = time.monotonic()
+    for (game_code, player_name), created_at in list(pending_player_joins.items()):
+        game = games.get(game_code)
+        if not game or player_name not in game.get("players", []):
+            pending_player_joins.pop((game_code, player_name), None)
+            continue
+        if now - created_at < PLAYER_JOIN_GRACE_SECONDS:
+            continue
+        if remove_player_from_game(game_code, player_name):
+            socketio.emit(
+                "player_left",
+                {"player_name": player_name, "game_data": game},
+                room=game_code,
+            )
 
 
 def global_tick_loop():
@@ -87,6 +136,7 @@ def global_tick_loop():
     previous_snapshots = {}
     while True:
         socketio.sleep(1.0 / 30.0)
+        expire_pending_player_joins()
         for code, game in list(games.items()):
             if not game.get("active"):
                 previous_snapshots.pop(code, None)
@@ -491,6 +541,7 @@ def create_game():
         "tanks": {},
         "bullets": {},
     }
+    pending_player_joins[(game_code, host_name)] = time.monotonic()
     set_player_tank(
         games[game_code],
         host_name,
@@ -545,6 +596,7 @@ def join_game():
     )
     init_player_score(game, player_name)
     ensure_dict(game, "tanks")[player_name]["alive"] = True
+    pending_player_joins[(game_code, player_name)] = time.monotonic()
 
     session["game_code"] = game_code
     session["player_name"] = player_name
@@ -573,6 +625,7 @@ def on_join(data):
     player_name = data.get("player_name")
 
     if game_code and game_code in games:
+        pending_player_joins.pop((game_code, player_name), None)
         join_room(game_code)
         emit(
             "player_join",
@@ -924,26 +977,8 @@ def on_disconnect():
     if not game or not player_name:
         return
 
-    players = ensure_list(game, "players")
-    if player_name not in players:
+    if not remove_player_from_game(game_code, player_name):
         return
-
-    players.remove(player_name)
-
-    tanks = ensure_dict(game, "tanks")
-    tanks.pop(player_name, None)
-
-    scores = ensure_dict(game, "scores")
-    scores.pop(player_name, None)
-
-    bot_names = set(ensure_list(game, "bots"))
-    if player_name == game.get("host"):
-        next_host = next((name for name in players if name not in bot_names), None)
-        if next_host:
-            game["host"] = next_host
-
-    if not any(name not in bot_names for name in players):
-        game["active"] = False
 
     emit(
         "player_left",

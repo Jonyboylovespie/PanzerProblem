@@ -1,21 +1,24 @@
 import os
 import json
 import unittest
+from unittest.mock import patch
 from html.parser import HTMLParser
 
 os.environ.setdefault("SECRET_KEY", "test-only-secret")
 
-from app import app, games, socketio
+from app import app, games, pending_player_joins, socketio, expire_pending_player_joins
 
 
 class PublicLobbyTests(unittest.TestCase):
     def setUp(self):
         app.config.update(TESTING=True)
         games.clear()
+        pending_player_joins.clear()
         self.client = app.test_client()
 
     def tearDown(self):
         games.clear()
+        pending_player_joins.clear()
 
     def create_game(self, host="Host", public=False):
         data = {"host_name": host}
@@ -70,6 +73,22 @@ class PublicLobbyTests(unittest.TestCase):
         connection.disconnect()
         self.assertFalse(games[code]["active"])
         self.assertNotIn(b"Leaving host", self.client.get("/public-games").data)
+
+    def test_join_that_never_connects_is_expired(self):
+        code = self.create_game("Host", public=True)
+        guest = app.test_client()
+        response = guest.post(
+            "/join", data={"game_code": code, "player_name": "Abandoned"}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("Abandoned", games[code]["players"])
+
+        created_at = pending_player_joins[(code, "Abandoned")]
+        with patch("app.time.monotonic", return_value=created_at + 16):
+            expire_pending_player_joins()
+
+        self.assertNotIn("Abandoned", games[code]["players"])
+
 
     def test_stale_links_and_duplicate_names_are_rejected(self):
         code = self.create_game(public=True)
